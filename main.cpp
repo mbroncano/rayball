@@ -51,6 +51,13 @@ struct Ray {
 		origin = o;
 		direction = d;
 	}
+	
+	inline Ray reflect(const Vector3& hitPoint, const Vector3 &normal) {
+		float cosI = -1.f * direction * normal;
+		
+		// applies the smallest offset over the hit point to be sure not to hit again the sphere
+		return Ray(hitPoint + normal * (1.f + FLT_EPSILON), direction + 2.f * cosI * normal);
+	}
 };
 
 struct Camera {
@@ -81,6 +88,7 @@ struct Camera {
 		
 		return Ray(position, vec_x * fx + vec_y * fy + direction);
 	}
+	
 };
 
 
@@ -178,16 +186,7 @@ inline Vector3 uniformSampleSphere(const float u1, const float u2) {
 	return Vector3(xx, yy, zz);
 }
 
-inline Vector3 reflectVector(const Vector3& ray, const Vector3 &normal) {
-	// r = i + 2 cos(wi) * n
-	float cosI = -1.f * ray * normal;
-	return ray + 2.f * cosI * normal;
-}
 
-inline Ray reflectRay(const Ray& ray, const Vector3& hitPoint, const Vector3 &normal) {
-	// applies the smallest offset over the hit point to be sure not to hit again the sphere
-	return Ray(hitPoint + normal * (1.f + FLT_EPSILON), reflectVector(ray.direction, normal));
-}
 
 
 Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& normal, Sphere *spheres, int numspheres, int numsamples, bool stochastic) {
@@ -258,7 +257,7 @@ Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& nor
 	return total;
 }
 
-Vector3 sampleRay(const Ray& ray, Sphere *spheres, int numspheres, int depth, int light_samples, int stochastic) {
+Vector3 sampleRay(Ray& ray, Sphere *spheres, int numspheres, int depth, int light_samples, int stochastic) {
 	
 	Vector3 sample = vec_zero;
 
@@ -317,7 +316,7 @@ Vector3 sampleRay(const Ray& ray, Sphere *spheres, int numspheres, int depth, in
 				normal = -1.f * normal;
 			}
 
-			Ray reflected = reflectRay(ray, hitPoint, normal);
+			Ray reflected = ray.reflect(hitPoint, normal);
 			sample = sampleRay(reflected, spheres, numspheres, depth, light_samples, stochastic).cmul(color);
 		}
 		break;
@@ -338,7 +337,7 @@ Vector3 sampleRay(const Ray& ray, Sphere *spheres, int numspheres, int depth, in
 			float cosT2 = 1.0f - n * n * (1.0f - cosI * cosI);
 			// total internal reflection
 			if (cosT2 < 0.f) {
-				Ray reflected = reflectRay(ray, hitPoint, normal);
+				Ray reflected = ray.reflect(hitPoint, normal);
 				sample = sampleRay(reflected, spheres, numspheres, depth, light_samples, stochastic);
 			} else {
 				float cosT = sqrtf(cosT2);
@@ -348,7 +347,7 @@ Vector3 sampleRay(const Ray& ray, Sphere *spheres, int numspheres, int depth, in
 				float para = pow((n2 * cosI - n1 * cosT) / (n2 * cosI + n1 * cosT), 2.f);
 				float fres = (perp + para) / 2.f;
 
-				Ray reflected = reflectRay(ray, hitPoint, normal);
+				Ray reflected = ray.reflect(hitPoint, normal);
 				sample = fres * sampleRay(reflected, spheres, numspheres, depth, light_samples, stochastic);
 				
 				Ray refracted = Ray(hitPoint - normal * (1.f + FLT_EPSILON), n * ray.direction + (n * cosI - cosT) * normal);
