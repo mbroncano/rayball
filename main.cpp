@@ -150,9 +150,9 @@ void getNearestSphere(const Ray& r, Sphere *spheres, int numspheres, int& index,
 	index = -1;
 
 	for (int i = 0; i< numspheres; i++) {
-		Sphere s = spheres[i];
+		Sphere *s = (spheres + i);
 		
-		float d = s.Intersect(r);
+		float d = s->Intersect(r);
 		if (d > 0 && d < distance) {
 			index = i;
 			distance = d;
@@ -194,9 +194,9 @@ Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& nor
 	Vector3 total = vec_zero;
 	
 	for (int i = 0; i< numspheres; i++) {
-		Sphere l = spheres[i];
+		Sphere *l = (spheres + i);
 		
-		if (l.isLight()) {
+		if (l->isLight()) {
 			Vector3 illumination = vec_zero;
 			
 			for(int j =0; j < numsamples; j ++) {
@@ -216,7 +216,7 @@ Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& nor
 				
 				// creates a shadow ray, the light point should be inside of the light sphere
 				// the origin is just a little bit away from the surface
-				Vector3 lightPoint = l.center + spherePoint * (l.radius - FLT_EPSILON);
+				Vector3 lightPoint = l->center + spherePoint * (l->radius - FLT_EPSILON);
 				Vector3 lightVector = lightPoint - hitPoint;
 				Vector3 origin = hitPoint + normal * (1.f + FLT_EPSILON);
 				Ray shadowRay = Ray(origin, lightVector);
@@ -244,7 +244,7 @@ Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& nor
 
 					// lenght of the light vector
 					float attenuation = sqrtf(lightVector * lightVector);
-					Vector3 contribution = l.emission * (lambert + blinn) * 0.5f / attenuation;
+					Vector3 contribution = l->emission * (lambert + blinn) * 0.5f / attenuation;
 
 					illumination = illumination + contribution;
 				}
@@ -273,23 +273,24 @@ Vector3 sampleRay(const Ray& ray, Sphere *spheres, int numspheres, int depth, in
 		return sample;
 	}
 	
-	Sphere s = spheres[index];
-	if (s.isLight()) {
-		return s.emission;
+	Sphere *s = (spheres + index);
+	if (s->isLight()) {
+		return s->emission;
 	}
 
 	Vector3 illumination = vec_zero;
 	Vector3 hitPoint = ray.origin + distance * ray.direction;
-	Vector3 normal = s.Normal(hitPoint);
-	Vector3 color = s.color;
+	Vector3 normal = s->Normal(hitPoint);
+	Vector3 color = s->color;
+	int material = s->material;
 	
-	switch(s.material) {
+	switch(material) {
 		case CHECKER:
 		case DIFF: {
-			if (s.material == CHECKER) {
+			if (material == CHECKER) {
 				float u,v;
 				
-				s.getTextUV(hitPoint, u, v);
+				s->getTextUV(hitPoint, u, v);
 				
 				int a = int(u * 8.f) % 2;
 				int b = int(v * 8.f) % 2;
