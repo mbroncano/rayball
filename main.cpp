@@ -129,6 +129,13 @@ struct Sphere {
 		}
 	}
 	
+	inline void getTextUV(const Vector3& point, float& u, float &v) {
+		Vector3 normal = this->Normal(point);
+		
+		u = atan(normal.z/normal.x) / M_PI - 0.5f;
+		v = asin(normal.y) / M_PI - 0.5f;
+	}
+	
 	inline Vector3 Normal(const Vector3& spherePoint) {
 		return normalize(spherePoint - center);
 	}
@@ -154,7 +161,7 @@ void getNearestSphere(const Ray& r, Sphere *spheres, int numspheres, int& index,
 }
 
 enum {
-	DIFF, SPEC, REFR
+	DIFF, SPEC, REFR, CHECKER
 };
 
 float frandom() {
@@ -277,7 +284,18 @@ Vector3 sampleRay(const Ray& ray, Sphere *spheres, int numspheres, int depth, in
 	Vector3 color = s.color;
 	
 	switch(s.material) {
+		case CHECKER:
 		case DIFF: {
+			if (s.material == CHECKER) {
+				float u,v;
+				
+				s.getTextUV(hitPoint, u, v);
+				
+				int a = int(u * 8.f) % 2;
+				int b = int(v * 8.f) % 2;
+				color = (a ^ b)? color * 0.6f : color;
+			}
+			
 			// we want also to illuminate the inside of the sphere, so we
 			// will invert the normal if we are inside of the sphere (i.e. the ray origin is inside it)
 			// rationale: if they are in the same direction, the cos/dot is positive
@@ -366,7 +384,7 @@ void *rayTrace(int width, int height) {
 		Sphere("bottom",	Vector3(50.f, 1e4f, 81.6f), 			1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
 		Sphere("top",		Vector3(50.f, -1e4f + 81.6f, 81.6f),	 1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
 		Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	SPEC),
-		Sphere("ball",		Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,	DIFF),
+		Sphere("ball",		Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,	CHECKER),
 		Sphere("glass",		Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	REFR),
 		Sphere("light",		Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,		 			Vector3(12.f, 12.f, 12.f),	DIFF),
 	};
