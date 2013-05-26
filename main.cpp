@@ -240,7 +240,7 @@ Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& nor
 					float phong = powf(std::max(0.f, normalReflect * normalLightVector), nshiny);
 					*/
 					// blinn & torrance alternative to phong (faster to compute, similar)
-					float blinn = powf(normalize(lightVector+ray.direction) * normal, nshiny); 
+					float blinn = powf(normalize(lightVector+ray.direction) * normal, nshiny * 2.f); 
 
 					// lenght of the light vector
 					float attenuation = sqrtf(lightVector * lightVector);
