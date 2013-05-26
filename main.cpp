@@ -7,6 +7,8 @@
 #include <omp.h>
 #include <algorithm>
 #include <GLUT/glut.h>
+
+// from https://github.com/brandonpelfrey/Fast-BVH
 #include "Vector3.h"
 
 
@@ -15,6 +17,30 @@ const Vector3 vec_zero = Vector3(0.f, 0.f, 0.f);
 union RGBA{
 	uint32_t rgba;
 	struct { uint8_t r, g, b, a; };
+	uint8_t comp[4];
+	
+	RGBA(const Vector3& sample) {
+		for (int i = 0; i < 4; i++) {
+			comp[i] = std::min(int(sample[i] * 256), 255);
+		}
+	}
+	
+	static void srgbEncode(Vector3& c)
+	{
+		for (int i =0; i< 4; i++) {
+		    if (c[i] <= 0.0031308f) {
+		        c[i] *= 12.92f; 
+		    } else {
+		        c[i] *= 1.055f * powf(c[i], 0.4166667f) - 0.055f; // Inverse gamma 2.4
+			}
+		}
+	}
+
+	static void exposure(Vector3& c, float e) {
+		for (int i =0; i< 4; i++) {
+			c[i] = 1.f - expf(c[i] * e);
+		}
+	}
 };
 
 struct Ray {
@@ -326,23 +352,6 @@ Vector3 sampleRay(const Ray& ray, Sphere *spheres, int numspheres, int depth, in
 #define STOCHASTIC_PIXEL_SAMPLING false
 #define STOCHASTIC_LIGHT_SAMPLING false
 
-void srgbEncode(Vector3& c)
-{
-	for (int i =0; i< 4; i++) {
-	    if (c[i] <= 0.0031308f) {
-	        c[i] *= 12.92f; 
-	    } else {
-	        c[i] *= 1.055f * powf(c[i], 0.4166667f) - 0.055f; // Inverse gamma 2.4
-		}
-	}
-}
-
-void exposure(Vector3& c, float e) {
-	for (int i =0; i< 4; i++) {
-		c[i] = 1.f - expf(c[i] * e);
-	}
-}
-
 void *rayTrace(int width, int height) {
 	
 //	srand((unsigned)time(0));
@@ -363,7 +372,7 @@ void *rayTrace(int width, int height) {
 	};
 	int numspheres = sizeof(spheres) / sizeof(spheres[0]);
 
-	char *fb = (char *)calloc(width * height, 4); // includes RGBA, clears memory
+	RGBA *fb = (RGBA *)calloc(width * height, sizeof(RGBA)); // includes RGBA, clears memory
 	int sample_dir = sqrt(PIXEL_SAMPLES);
 
 	// bounce the ligth!
@@ -414,21 +423,11 @@ void *rayTrace(int width, int height) {
 			{
 				sample = sample * 1.f / (PIXEL_SAMPLES);
 
-				// gamma correction
-				if (x < RES_X/2) {
-					exposure(sample, -1.5f);
-					srgbEncode(sample);
-				}
-			
-				sample = sample * 256.f;
-				if (sample.x > 256) sample.x = 255;
-				if (sample.y > 256) sample.y = 255;
-				if (sample.z > 256) sample.z = 255;
+				// gamma correction, exposure
+				RGBA::exposure(sample, -2.f);
+				RGBA::srgbEncode(sample);
 
-				int fbidx = (y * width + x) * 4;
-				fb[fbidx + 0] = (unsigned char)sample.x;
-				fb[fbidx + 1] = (unsigned char)sample.y;
-				fb[fbidx + 2] = (unsigned char)sample.z;
+				fb[y * width + x] = RGBA(sample);
 			}
 		}
 	}
