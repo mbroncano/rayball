@@ -91,8 +91,7 @@ struct Camera {
 	
 };
 
-
-struct Sphere {	
+struct Primitive {
 	float radius;
 	Vector3 center;
 	Vector3 color;
@@ -100,7 +99,14 @@ struct Sphere {
 	const char *name;
 	int material;
 
-	Sphere(const char *n, Vector3 c, float r, Vector3 col, Vector3 e, int m) {
+	Primitive(const char *n) { name = n; }
+	float Intersect(Ray r) {};
+	bool isLight() {};
+};
+
+struct Sphere : Primitive {	
+
+	Sphere(const char *n, Vector3 c, float r, Vector3 col, Vector3 e, int m) : Primitive(n) {
 		name = n;
 		center = c;
 		radius = r;
@@ -185,8 +191,6 @@ inline Vector3 uniformSampleSphere(const float u1, const float u2) {
 
 	return Vector3(xx, yy, zz);
 }
-
-
 
 
 Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& normal, Sphere *spheres, int numspheres, int numsamples, bool stochastic) {
@@ -284,17 +288,17 @@ Vector3 sampleRay(Ray& ray, Sphere *spheres, int numspheres, int depth, int ligh
 	int material = s->material;
 	
 	switch(material) {
-		case CHECKER:
+		case CHECKER: {
+			float u,v;
+			
+			s->getTextUV(hitPoint, u, v);
+			
+			int a = int(u * 8.f) % 2;
+			int b = int(v * 8.f) % 2;
+			color = (a ^ b)? color * 0.6f : color;
+		}
+		// NOTE THE MISSING BREAK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		case DIFF: {
-			if (material == CHECKER) {
-				float u,v;
-				
-				s->getTextUV(hitPoint, u, v);
-				
-				int a = int(u * 8.f) % 2;
-				int b = int(v * 8.f) % 2;
-				color = (a ^ b)? color * 0.6f : color;
-			}
 			
 			// we want also to illuminate the inside of the sphere, so we
 			// will invert the normal if we are inside of the sphere (i.e. the ray origin is inside it)
@@ -362,6 +366,32 @@ Vector3 sampleRay(Ray& ray, Sphere *spheres, int numspheres, int depth, int ligh
 	return sample;
 }
 
+struct Scene {
+	Sphere *spheres;
+	int numspheres;
+	Camera *camera;
+	
+	Scene(int width, int height) {
+		static Camera cornellCamera = Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f), width, height);		
+		static Sphere cornellSpheres[] = {
+			Sphere("left",		Vector3(1e4f + 1.f, 40.8f, 81.6f), 		1e4f,	Vector3(.75f, .25f, .25f),	vec_zero,	DIFF),
+			Sphere("right",		Vector3(-1e4f + 99.f, 40.8f, 81.6f),	1e4f,	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF),
+			Sphere("back",		Vector3(50.f, 40.8f, 1e4f), 			1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
+			Sphere("front",		Vector3(50.f, 40.8f, -1e4f), 			1e4f,	vec_zero,					vec_zero,	DIFF),
+			Sphere("bottom",	Vector3(50.f, 1e4f, 81.6f), 			1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
+			Sphere("top",		Vector3(50.f, -1e4f + 81.6f, 81.6f),	 1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
+			Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	SPEC),
+			Sphere("ball",		Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,	CHECKER),
+			Sphere("glass",		Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	REFR),
+			Sphere("light",		Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,		 			Vector3(12.f, 12.f, 12.f),	DIFF),
+		};
+		
+		camera = &cornellCamera;
+		spheres = cornellSpheres;
+		numspheres = 10;//sizeof(spheres) / sizeof(spheres[0]);
+	}
+};
+
 #define RES_X 256
 #define RES_Y RES_X
 #define MAX_DEPTH 6
@@ -373,28 +403,13 @@ Vector3 sampleRay(Ray& ray, Sphere *spheres, int numspheres, int depth, int ligh
 void *rayTrace(int width, int height) {
 	
 //	srand((unsigned)time(0));
-	
-	Camera camera = Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f), width, height);
-	
-	static Sphere spheres[] = {
-		Sphere("left",		Vector3(1e4f + 1.f, 40.8f, 81.6f), 		1e4f,	Vector3(.75f, .25f, .25f),	vec_zero,	DIFF),
-		Sphere("right",		Vector3(-1e4f + 99.f, 40.8f, 81.6f),	1e4f,	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF),
-		Sphere("back",		Vector3(50.f, 40.8f, 1e4f), 			1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
-		Sphere("front",		Vector3(50.f, 40.8f, -1e4f), 			1e4f,	vec_zero,					vec_zero,	DIFF),
-		Sphere("bottom",	Vector3(50.f, 1e4f, 81.6f), 			1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
-		Sphere("top",		Vector3(50.f, -1e4f + 81.6f, 81.6f),	 1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
-		Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	SPEC),
-		Sphere("ball",		Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,	CHECKER),
-		Sphere("glass",		Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	REFR),
-		Sphere("light",		Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,		 			Vector3(12.f, 12.f, 12.f),	DIFF),
-	};
-	int numspheres = sizeof(spheres) / sizeof(spheres[0]);
+	static Scene scene = Scene(width, height);
 
 	RGBA *fb = (RGBA *)calloc(width * height, sizeof(RGBA)); // includes RGBA, clears memory
 	int sample_dir = sqrt(PIXEL_SAMPLES);
 
 	// bounce the ligth!
-	Sphere *light = &spheres[numspheres - 1];
+	Sphere *light = &scene.spheres[scene.numspheres - 1];
 	static float vel_y = 0.f;
 	const float acce_y = 0.8f;
 	if (light->center.y < light->radius + vel_y) {
@@ -433,8 +448,8 @@ void *rayTrace(int width, int height) {
 						}
 					}
 					
-					Ray eyeRay = camera.createRay(dx, dy);
-					sample = sample + sampleRay(eyeRay, spheres, numspheres, MAX_DEPTH, LIGHT_SAMPLES, STOCHASTIC_LIGHT_SAMPLING);
+					Ray eyeRay = scene.camera->createRay(dx, dy);
+					sample = sample + sampleRay(eyeRay, scene.spheres, scene.numspheres, MAX_DEPTH, LIGHT_SAMPLES, STOCHASTIC_LIGHT_SAMPLING);
 				}
 			}	
 			//#pragma omp critical
@@ -456,7 +471,6 @@ void *rayTrace(int width, int height) {
 }
 
 // GLUT, OpenGL related functions
-
 GLuint textid = 0;
 char label[256];
 int screen_w, screen_h;
