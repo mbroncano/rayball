@@ -243,8 +243,6 @@ enum {
 typedef vector<Primitive *> sphere_vec_t;
 
 struct Scene {
-	Sphere *spheres;
-	int numspheres;
 	Camera *camera;
 	
 	sphere_vec_t *sphere_vec;
@@ -256,48 +254,36 @@ struct Scene {
 	}
 	
 	Scene() {
-		static Camera cornellCamera = Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f));		
-		static Sphere cornellSpheres[] = {
-			Sphere("left",		Vector3(1e4f + 1.f, 40.8f, 81.6f), 		1e4f,	Vector3(.75f, .25f, .25f),	vec_zero,	DIFF),
-			Sphere("right",		Vector3(-1e4f + 99.f, 40.8f, 81.6f),	1e4f,	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF),
-			Sphere("back",		Vector3(50.f, 40.8f, 1e4f), 			1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
-			Sphere("front",		Vector3(50.f, 40.8f, -1e4f), 			1e4f,	vec_zero,					vec_zero,	DIFF),
-			Sphere("bottom",	Vector3(50.f, 1e4f, 81.6f), 			1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
-			Sphere("top",		Vector3(50.f, -1e4f + 81.6f, 81.6f),	 1e4f,	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF),
-			Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	SPEC),
-			Sphere("ball",		Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,	CHECKER),
-			Sphere("glass",		Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	REFR),
-			Sphere("light",		Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,		 			Vector3(12.f, 12.f, 12.f),	DIFF),
-		};
-
-		camera = &cornellCamera;
-		spheres = cornellSpheres;
-		numspheres = sizeof(cornellSpheres) / sizeof(cornellSpheres[0]);
+		camera = new Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f));
 		
 		sphere_vec = new sphere_vec_t();
 		light_vec = new sphere_vec_t();
 
-		for(int i = 0; i < numspheres; i++) {
-			Sphere *s = spheres + i;
+		sphere_vec->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,		SPEC));
+		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,		CHECKER));
+		sphere_vec->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,		REFR));
+		sphere_vec->push_back(new Sphere("light",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,		 Vector3(12.f, 12.f, 12.f),	DIFF));
 
-			sphere_vec->push_back(s);
-			if (s->isLight()) {
-				light_vec->push_back(s);
+		sphere_vec->push_back(new Plane("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 1.f, 0.f),		Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+		sphere_vec->push_back(new Plane("top",		Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, -1.f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+		sphere_vec->push_back(new Plane("right",	Vector3(99.f, 0.f, 0.f),	Vector3(-1.f, 0.f, 0.f),	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF));
+		sphere_vec->push_back(new Plane("left",		Vector3(0.f, 0.f, 0.f),		Vector3(1.f, 0.f, 0.f),		Vector3(.75f, .25f, .25f),	vec_zero,	DIFF));
+		sphere_vec->push_back(new Plane("back",		Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, -1.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+//		sphere_vec->push_back(new Plane("front",	Vector3(0.f, 0.f, 20.f), Vector3(0.f, 0.f, 1.f),	vec_zero,		vec_zero,	DIFF));
+		
+		for (sphere_vec_t::iterator it = sphere_vec->begin(); it != sphere_vec->end(); ++it) {
+			if ((*it)->isLight()) {
+				light_vec->push_back(*it);
 			}
 		}
-		
-		Plane *p = new Plane("plane",		Vector3(0.f, 10.f, 0.f), 				Vector3(0.f, 1.f, 0.f),	Vector3(.75f, .25f, .75f),	vec_zero,	SPEC);
-		sphere_vec->push_back(p);
-		numspheres++;
-		
 	}
 	
 	Primitive *intersectRay(const Ray& r, float& distance) {
 		distance = FLT_MAX;
 		Primitive *ret = NULL;
 
-		for (int i = 0; i< numspheres; i++) {
-			Primitive *s = sphere_vec->at(i);
+		for (sphere_vec_t::iterator it = sphere_vec->begin(); it != sphere_vec->end(); ++it) {
+			Primitive *s = *it;
 
 			float d = s->getDistance(r);
 			if (d > 0 && d < distance) {
