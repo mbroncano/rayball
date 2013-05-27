@@ -7,6 +7,7 @@
 #include <omp.h>
 #include <algorithm>
 #include <vector>
+#include <iostream>
 #include <GLUT/glut.h>
 
 // from https://github.com/brandonpelfrey/Fast-BVH
@@ -102,30 +103,75 @@ struct Camera {
 };
 
 struct Primitive {
-	float radius;
-	Vector3 center;
+	const char *name;
+
 	Vector3 color;
 	Vector3 emission;
-	const char *name;
 	int material;
 
-	Primitive(const char *n) { name = n; }
-	float Intersect(Ray r) {};
-	bool isLight() {};
-};
-
-struct Sphere : Primitive {	
-
-	Sphere(const char *n, const Vector3& c, float r, const Vector3& col, const Vector3& e, int m) : Primitive(n) {
+	Primitive(const char *n, const Vector3& col, const Vector3& e, int m) {
 		name = n;
-		center = c;
-		radius = r;
 		color = col;
 		emission = e;
 		material = m;
 	}
 
-	float Intersect(const Ray& r) {
+	inline bool isLight() {
+		return emission.x != 0 || emission.y != 0 || emission.x != 0;
+	};
+
+	virtual float getDistance(const Ray& r) = 0;
+	virtual void getTextureCoordinates(const Vector3& point, float& u, float &v) = 0;
+	virtual Vector3 getNormal(const Vector3& spherePoint) = 0 ;
+	virtual Vector3 getSurfacePoint(const float u1, const float u2) = 0;
+	virtual Vector3 getCenter() = 0;
+};
+
+
+struct Plane : Primitive {
+	
+	Vector3 point;
+	Vector3 normal;
+	
+	Plane(const char *n, const Vector3& p, const Vector3& norm, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
+		point = p;
+		normal = normalize(norm);
+	}
+	
+	Vector3 getNormal(const Vector3& point) {
+		return normal;
+	}
+	
+	float getDistance(const Ray& r) {
+		return (point - r.origin) * normal / (r.direction * normal);
+	}
+	
+	Vector3 getCenter() {
+		return point;
+	}
+	
+	void getTextureCoordinates(const Vector3& p, float& u, float &v) {
+		u = 0;
+		v = 0;
+	}
+	
+	Vector3 getSurfacePoint(const float u1, const float u2) {
+		return point;
+	}
+	
+};
+
+
+struct Sphere : Primitive {	
+	Vector3 center;
+	float radius;
+
+	Sphere(const char *n, const Vector3& c, float r, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
+		center = c;
+		radius = r;
+	}
+
+	float getDistance(const Ray& r) {
 		Vector3 v = r.origin - center;
 		
 		float a = r.direction * r.direction;
@@ -153,39 +199,48 @@ struct Sphere : Primitive {
 		}
 	}
 	
-	inline void getTextUV(const Vector3& point, float& u, float &v) {
-		Vector3 normal = this->Normal(point);
+	inline void getTextureCoordinates(const Vector3& point, float& u, float &v) {
+		Vector3 normal = this->getNormal(point);
 		
 		u = atan(normal.z/normal.x) / M_PI - 0.5f;
 		v = asin(normal.y) / M_PI - 0.5f;
 	}
 	
-	inline Vector3 Normal(const Vector3& spherePoint) {
+	inline Vector3 getNormal(const Vector3& spherePoint) {
 		return normalize(spherePoint - center);
 	}
 
-	inline bool isLight() {
-		return !(emission.x == 0 && emission.y == 0 && emission.x == 0);
-	};
-	
-	
-	inline Vector3 uniformSampleSphere(const float u1, const float u2) {
+	inline Vector3 getSurfacePoint(const float u1, const float u2) {
 		const float zz = 1.f - 2.f * u1;
 		const float r = sqrt(fabs(1.f - zz * zz));
 		const float phi = 2.f * M_PI * u2;
 		const float xx = r * cos(phi);
 		const float yy = r * sin(phi);
 
-		return Vector3(xx, yy, zz);
+		return center + Vector3(xx, yy, zz) * (radius - FLT_EPSILON);
+	}
+	
+	inline Vector3 getCenter() {
+		return center;
 	}
 };
+
+ostream& operator<< (ostream& os, const Primitive& p) {
+	os << "[Primitive: " << p.name << "]";
+	return os;
+} 
+
+ostream& operator<< (ostream& os, const Sphere& s) {
+	os << "[Sphere: " << s.name << "]";
+	return os;
+} 
 
 
 enum {
 	DIFF, SPEC, REFR, CHECKER
 };
 
-typedef vector<Sphere *> sphere_vec_t;
+typedef vector<Primitive *> sphere_vec_t;
 
 struct Scene {
 	Sphere *spheres;
@@ -214,7 +269,7 @@ struct Scene {
 			Sphere("glass",		Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,	REFR),
 			Sphere("light",		Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,		 			Vector3(12.f, 12.f, 12.f),	DIFF),
 		};
-		
+
 		camera = &cornellCamera;
 		spheres = cornellSpheres;
 		numspheres = sizeof(cornellSpheres) / sizeof(cornellSpheres[0]);
@@ -224,34 +279,40 @@ struct Scene {
 
 		for(int i = 0; i < numspheres; i++) {
 			Sphere *s = spheres + i;
+
 			sphere_vec->push_back(s);
 			if (s->isLight()) {
 				light_vec->push_back(s);
 			}
 		}
+		
+		Plane *p = new Plane("plane",		Vector3(0.f, 10.f, 0.f), 				Vector3(0.f, 1.f, 0.f),	Vector3(.75f, .25f, .75f),	vec_zero,	SPEC);
+		sphere_vec->push_back(p);
+		numspheres++;
+		
 	}
 	
-	Sphere *intersectRay(const Ray& r, float& distance) {
+	Primitive *intersectRay(const Ray& r, float& distance) {
 		distance = FLT_MAX;
-		Sphere *ret = NULL;
+		Primitive *ret = NULL;
 
 		for (int i = 0; i< numspheres; i++) {
-			Sphere *s = sphere_vec->at(i);
+			Primitive *s = sphere_vec->at(i);
 
-			float d = s->Intersect(r);
+			float d = s->getDistance(r);
 			if (d > 0 && d < distance) {
 				distance = d;
 				ret = s;
 			}
 		}
-		
+
 		return ret;
 	}
 	
 	void tick() {
 		
 		// bounce the ligth!
-		Sphere *light = light_vec->at(0);
+		Sphere *light = (Sphere *)light_vec->at(0);
 		static float vel_y = 0.f;
 		const float acce_y = 0.8f;
 		if (light->center.y < light->radius + vel_y) {
@@ -345,7 +406,7 @@ struct RayTracer {
 		}
 
 		float distance;
-		Sphere *s = scene->intersectRay(ray, distance);
+		Primitive *s = scene->intersectRay(ray, distance);
 		
 		if (s == NULL) {
 			return sample;
@@ -355,7 +416,7 @@ struct RayTracer {
 
 		Vector3 illumination = vec_zero;
 		Vector3 hitPoint = ray.origin + distance * ray.direction;
-		Vector3 normal = s->Normal(hitPoint);
+		Vector3 normal = s->getNormal(hitPoint);
 		Vector3 color = s->color;
 		int material = s->material;
 
@@ -363,7 +424,7 @@ struct RayTracer {
 			case CHECKER: {
 				float u,v;
 
-				s->getTextUV(hitPoint, u, v);
+				s->getTextureCoordinates(hitPoint, u, v);
 
 				int a = int(u * 8.f) % 2;
 				int b = int(v * 8.f) % 2;
@@ -442,34 +503,35 @@ struct RayTracer {
 		Vector3 total = vec_zero;
 
 		for (sphere_vec_t::iterator it = scene->light_vec->begin(); it != scene->light_vec->end(); ++it) {
-			Sphere *l = *it;
+			Primitive *l = *it;
 
 			Vector3 illumination = vec_zero;
 
 			for(int j =0; j < light_samples; j ++) {
 				// the default light point is the center of the sphere
-				Vector3 spherePoint = vec_zero;
+				Vector3 lightPoint;
 
 				// chooses a random point over the sphere
 				if (soft_shadows) {
-					spherePoint = l->uniformSampleSphere(frandom(), frandom());
+					lightPoint = l->getSurfacePoint(frandom(), frandom());
 					// TODO: check and correct if the point is at the other side of the sphere
 				// special case for 1 sample, the centre of the light (whitted)
 				// for the rest, distributed over the sphere
 				} else if (light_samples > 1) {
 					float t = float(j) / light_samples;
-					spherePoint = l->uniformSampleSphere(t, t);
+					lightPoint = l->getSurfacePoint(t, t);
+				} else {
+					lightPoint = l->getCenter();
 				}
 
 				// creates a shadow ray, the light point should be inside of the light sphere
 				// the origin is just a little bit away from the surface
-				Vector3 lightPoint = l->center + spherePoint * (l->radius - FLT_EPSILON);
 				Vector3 lightVector = lightPoint - hitPoint;
 				Vector3 origin = hitPoint + normal * (1.f + FLT_EPSILON);
 				Ray shadowRay = Ray(origin, lightVector);
 
 				float distance;
-				Sphere *s = scene->intersectRay(shadowRay, distance);
+				Primitive *s = scene->intersectRay(shadowRay, distance);
 
 				// the nearest intersection should be the light
 				if (s == l) {
@@ -507,9 +569,8 @@ struct RayTracer {
 #define RES_X 256
 #define RES_Y RES_X
 #define MAX_DEPTH 6
-#define PIXEL_SAMPLES 4
+#define PIXEL_SAMPLES 1
 #define LIGHT_SAMPLES 1
-#define STOCHASTIC_PIXEL_SAMPLING false
 #define STOCHASTIC_LIGHT_SAMPLING false
 
 // Render and scene
