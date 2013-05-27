@@ -105,6 +105,8 @@ struct Camera {
 struct Primitive {
 	const char *name;
 
+	Vector3 vel;
+
 	Vector3 color;
 	Vector3 emission;
 	int material;
@@ -114,6 +116,8 @@ struct Primitive {
 		color = col;
 		emission = e;
 		material = m;
+		
+		vel = vec_zero;
 	}
 
 	inline bool isLight() {
@@ -243,27 +247,30 @@ enum {
 typedef vector<Primitive *> sphere_vec_t;
 
 struct Scene {
-	Camera *camera;
-	
+	Camera *camera;	
 	sphere_vec_t *sphere_vec;
 	sphere_vec_t *light_vec;
 	
 	~Scene() {
 		delete sphere_vec;
 		delete light_vec;
+		delete camera;
 	}
 	
 	Scene() {
-		camera = new Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f));
 		
 		sphere_vec = new sphere_vec_t();
 		light_vec = new sphere_vec_t();
 
-		sphere_vec->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,		SPEC));
-		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,		CHECKER));
-		sphere_vec->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,		REFR));
-		sphere_vec->push_back(new Sphere("light",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,		 Vector3(12.f, 12.f, 12.f),	DIFF));
-
+		sphere_vec->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,			SPEC));
+		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,			CHECKER));
+		sphere_vec->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,			REFR));
+		sphere_vec->push_back(new Sphere("light",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(12.f, 12.f, 12.f),	DIFF));
+		/*
+		sphere_vec->push_back(new Sphere("light r",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(48.f, 1.f, 1.f),	DIFF));
+		sphere_vec->push_back(new Sphere("light b",	Vector3(40.f, 71.6f - 15.f, 71.6f), 	7.f,	vec_zero,			 Vector3(1.f, 1.f, 48.f),	DIFF));
+		sphere_vec->push_back(new Sphere("light g",	Vector3(30.f, 61.6f - 15.f, 61.6f), 	7.f,	vec_zero,			 Vector3(1.f, 48.f, 1.f),	DIFF));
+		*/
 		sphere_vec->push_back(new Plane("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 1.f, 0.f),		Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
 		sphere_vec->push_back(new Plane("top",		Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, -1.f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
 		sphere_vec->push_back(new Plane("right",	Vector3(99.f, 0.f, 0.f),	Vector3(-1.f, 0.f, 0.f),	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF));
@@ -276,6 +283,8 @@ struct Scene {
 				light_vec->push_back(*it);
 			}
 		}
+
+		camera = new Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f));
 	}
 	
 	Primitive *intersectRay(const Ray& r, float& distance) {
@@ -296,31 +305,32 @@ struct Scene {
 	}
 	
 	void tick() {
+		const Vector3 acc = Vector3(0.f, -0.9f, 0.f);
+		const Vector3 aa = Vector3(0.f, 0.f, 0.f);
+		const Vector3 bb = Vector3(100.f, 100.f, 100.f);
 		
-		// bounce the ligth!
-		Sphere *light = (Sphere *)light_vec->at(0);
-		static float vel_y = 0.f;
-		const float acce_y = 0.8f;
-		if (light->center.y < light->radius + vel_y) {
-			vel_y *= -1.f;
-		} else {
-			vel_y += acce_y;
-		}
-		light->center.y -= vel_y;
+		// animate lights
+		for (sphere_vec_t::iterator it = light_vec->begin(); it != light_vec->end(); ++it) {
+			Sphere *light = (Sphere *)*it;
 
-		static float vel_x = 2.f;
-		if ((light->center.x < light->radius) || (light->center.x > 100.f - light->radius)) {
-			vel_x *= -1.f;
+			for (int i =0; i<3; i++) {
+				if ((light->center[i] < (aa[i] + light->radius*2)) || (light->center[i] > (bb[i] - light->radius*2))){
+					light->vel[i] *= -1.f;
+					
+					for (int j = 0; j< 3; j ++) {
+						if (i != j)
+							light->vel[j] += (frandom() * 2.f - 1.f) * 1.f;
+					}
+					
+				} else {
+					light->vel[i] += acc[i];
+				}
+				
+				light->center[i] += light->vel[i];
+			}
 		}
-		light->center.x -= vel_x;
-
 	}
 };
-
-
-
-
-
 
 
 struct RayTracer {
@@ -555,7 +565,7 @@ struct RayTracer {
 #define RES_X 256
 #define RES_Y RES_X
 #define MAX_DEPTH 6
-#define PIXEL_SAMPLES 1
+#define PIXEL_SAMPLES 4
 #define LIGHT_SAMPLES 1
 #define STOCHASTIC_LIGHT_SAMPLING false
 
