@@ -6,13 +6,20 @@
 #include <time.h>
 #include <omp.h>
 #include <algorithm>
+#include <vector>
 #include <GLUT/glut.h>
 
 // from https://github.com/brandonpelfrey/Fast-BVH
 #include "Vector3.h"
 
 
+using namespace std;
+
 const Vector3 vec_zero = Vector3(0.f, 0.f, 0.f);
+
+float frandom() {
+	return (float)rand()/(float)RAND_MAX;
+}
 
 union RGBA{
 	uint32_t rgba;
@@ -21,7 +28,7 @@ union RGBA{
 	
 	RGBA(const Vector3& sample) {
 		for (int i = 0; i < 4; i++) {
-			comp[i] = std::min(int(sample[i] * 256), 255);
+			comp[i] = min(int(sample[i] * 256), 255);
 		}
 	}
 	
@@ -157,6 +164,17 @@ struct Sphere : Primitive {
 	inline bool isLight() {
 		return !(emission.x == 0 && emission.y == 0 && emission.x == 0);
 	};
+	
+	
+	inline Vector3 uniformSampleSphere(const float u1, const float u2) {
+		const float zz = 1.f - 2.f * u1;
+		const float r = sqrt(fabs(1.f - zz * zz));
+		const float phi = 2.f * M_PI * u2;
+		const float xx = r * cos(phi);
+		const float yy = r * sin(phi);
+
+		return Vector3(xx, yy, zz);
+	}
 };
 
 
@@ -164,10 +182,20 @@ enum {
 	DIFF, SPEC, REFR, CHECKER
 };
 
+typedef vector<Sphere *> sphere_vec_t;
+
 struct Scene {
 	Sphere *spheres;
 	int numspheres;
 	Camera *camera;
+	
+	sphere_vec_t *sphere_vec;
+	sphere_vec_t *light_vec;
+	
+	~Scene() {
+		delete sphere_vec;
+		delete light_vec;
+	}
 	
 	Scene(int width, int height) {
 		static Camera cornellCamera = Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f), width, height);		
@@ -186,103 +214,98 @@ struct Scene {
 		
 		camera = &cornellCamera;
 		spheres = cornellSpheres;
-		numspheres = 10;//sizeof(spheres) / sizeof(spheres[0]);
+		numspheres = sizeof(cornellSpheres) / sizeof(cornellSpheres[0]);
+		
+		sphere_vec = new sphere_vec_t();
+		light_vec = new sphere_vec_t();
+
+		for(int i = 0; i < numspheres; i++) {
+			Sphere *s = spheres + i;
+			sphere_vec->push_back(s);
+			if (s->isLight()) {
+				light_vec->push_back(s);
+			}
+		}
 	}
 	
-	void getNearestSphere(const Ray& r, int& index, float& distance) {
+	Sphere *intersectRay(const Ray& r, float& distance) {
 		distance = FLT_MAX;
-		index = -1;
+		Sphere *ret = NULL;
 
 		for (int i = 0; i< numspheres; i++) {
-			Sphere *s = (spheres + i);
+			Sphere *s = sphere_vec->at(i);
 
 			float d = s->Intersect(r);
 			if (d > 0 && d < distance) {
-				index = i;
 				distance = d;
+				ret = s;
 			}
 		}
+		
+		return ret;
 	}
 };
 
-float frandom() {
-	return (float)rand()/(float)RAND_MAX;
-}
-
-inline Vector3 uniformSampleSphere(const float u1, const float u2) {
-	const float zz = 1.f - 2.f * u1;
-	const float r = sqrt(fabs(1.f - zz * zz));
-	const float phi = 2.f * M_PI * u2;
-	const float xx = r * cos(phi);
-	const float yy = r * sin(phi);
-
-	return Vector3(xx, yy, zz);
-}
-
-
-Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& normal, Scene *scene, int numsamples, bool stochastic) {
+Vector3 sampleLightsV(const Ray& ray, const Vector3& hitPoint, const Vector3& normal, Scene *scene, int numsamples, bool stochastic) {
 	Vector3 total = vec_zero;
-	
-	for (int i = 0; i< scene->numspheres; i++) {
-		Sphere *l = &scene->spheres[i];
+
+	for (sphere_vec_t::iterator it = scene->light_vec->begin(); it != scene->light_vec->end(); ++it) {
+		Sphere *l = *it;
 		
-		if (l->isLight()) {
-			Vector3 illumination = vec_zero;
-			
-			for(int j =0; j < numsamples; j ++) {
-				// the default light point is the center of the sphere
-				Vector3 spherePoint = vec_zero;
-			
-				// chooses a random point over the sphere
-				if (stochastic) {
-					spherePoint = uniformSampleSphere(frandom(), frandom());
-					// TODO: check and correct if the point is at the other side of the sphere
-				// special case for 1 sample, the centre of the light (whitted)
-				// for the rest, distributed over the sphere
-				} else if (numsamples > 1) {
-					float t = float(j) / numsamples;
-					spherePoint = uniformSampleSphere(t, t);
-				}
-				
-				// creates a shadow ray, the light point should be inside of the light sphere
-				// the origin is just a little bit away from the surface
-				Vector3 lightPoint = l->center + spherePoint * (l->radius - FLT_EPSILON);
-				Vector3 lightVector = lightPoint - hitPoint;
-				Vector3 origin = hitPoint + normal * (1.f + FLT_EPSILON);
-				Ray shadowRay = Ray(origin, lightVector);
-
-				float distance;
-				int index;
-				scene->getNearestSphere(shadowRay, index, distance);
-	
-				// the nearest intersection should be the light
-				if (index == i) {
-					// normalized light vector
-					Vector3 normalLightVector = normalize(lightVector);
-					
-					// lambert cosine (diffuse component)
-					float lambert = std::max(0.f, normal * normalLightVector);
-
-					// phong illumination (specular component)
-					float nshiny = 8.f; // the higher the smaller the spot
-					/*
-					Vector3 normalReflect = normalize(reflectVector(ray.direction, normal));
-					float phong = powf(std::max(0.f, normalReflect * normalLightVector), nshiny);
-					*/
-					// blinn & torrance alternative to phong (faster to compute, similar)
-					float blinn = powf(normalize(lightVector+ray.direction) * normal, nshiny * 2.f); 
-
-					// lenght of the light vector
-					float attenuation = sqrtf(lightVector * lightVector);
-					Vector3 contribution = l->emission * (lambert + blinn) * 0.5f / attenuation;
-
-					illumination = illumination + contribution;
-				}
+		Vector3 illumination = vec_zero;
+		
+		for(int j =0; j < numsamples; j ++) {
+			// the default light point is the center of the sphere
+			Vector3 spherePoint = vec_zero;
+		
+			// chooses a random point over the sphere
+			if (stochastic) {
+				spherePoint = l->uniformSampleSphere(frandom(), frandom());
+				// TODO: check and correct if the point is at the other side of the sphere
+			// special case for 1 sample, the centre of the light (whitted)
+			// for the rest, distributed over the sphere
+			} else if (numsamples > 1) {
+				float t = float(j) / numsamples;
+				spherePoint = l->uniformSampleSphere(t, t);
 			}
 
-			// averages illumination over the samples
-			total = total + illumination / numsamples;
+			// creates a shadow ray, the light point should be inside of the light sphere
+			// the origin is just a little bit away from the surface
+			Vector3 lightPoint = l->center + spherePoint * (l->radius - FLT_EPSILON);
+			Vector3 lightVector = lightPoint - hitPoint;
+			Vector3 origin = hitPoint + normal * (1.f + FLT_EPSILON);
+			Ray shadowRay = Ray(origin, lightVector);
+
+			float distance;
+			Sphere *s = scene->intersectRay(shadowRay, distance);
+
+			// the nearest intersection should be the light
+			if (s == l) {
+				// normalized light vector
+				Vector3 normalLightVector = normalize(lightVector);
+				
+				// lambert cosine (diffuse component)
+				float lambert = std::max(0.f, normal * normalLightVector);
+
+				// phong illumination (specular component)
+				float nshiny = 8.f; // the higher the smaller the spot
+				/*
+				Vector3 normalReflect = normalize(reflectVector(ray.direction, normal));
+				float phong = powf(std::max(0.f, normalReflect * normalLightVector), nshiny);
+				*/
+				// blinn & torrance alternative to phong (faster to compute, similar)
+				float blinn = powf(normalize(lightVector+ray.direction) * normal, nshiny * 2.f); 
+
+				// lenght of the light vector
+				float attenuation = sqrtf(lightVector * lightVector);
+				Vector3 contribution = l->emission * (lambert + blinn) * 0.5f / attenuation;
+
+				illumination = illumination + contribution;
+			}
 		}
+
+			// averages illumination over the samples
+		total = total + illumination / numsamples;
 	};
 	
 	return total;
@@ -297,14 +320,10 @@ Vector3 sampleRay(Ray& ray, Scene *scene, int depth, int light_samples, int stoc
 	}
 	
 	float distance;
-	int index;
-	scene->getNearestSphere(ray, index, distance);
-	if (index == -1) {
+	Sphere *s = scene->intersectRay(ray, distance);
+	if (s == NULL) {
 		return sample;
-	}
-	
-	Sphere *s = &scene->spheres[index];
-	if (s->isLight()) {
+	} else if (s->isLight()) {
 		return s->emission;
 	}
 
@@ -333,7 +352,7 @@ Vector3 sampleRay(Ray& ray, Scene *scene, int depth, int light_samples, int stoc
 			if (normal * ray.direction > 0.f) {
 				normal = -1.f * normal;
 			}
-			illumination = sampleLights(ray, hitPoint, normal, scene, light_samples, stochastic);
+			illumination = sampleLightsV(ray, hitPoint, normal, scene, light_samples, stochastic);
 
 			// lambert model
 			Vector3 ambient = Vector3(1.0f, 1.0f, 1.0f) * 0.7f;
@@ -548,7 +567,7 @@ int main(int argc, char **argv) {
 	glutInit(&argc, argv);
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_ALPHA);
 	glutInitWindowSize(1024, 1024);
-	glutInitWindowPosition(50, 50);
+	glutInitWindowPosition(1300, 50);
 	glutCreateWindow("Rayball3");
 
 	glutDisplayFunc(display);
