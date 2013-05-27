@@ -75,13 +75,16 @@ struct Camera {
 	int width, height;
 	Vector3 vec_x, vec_y;
 
-	Camera(const Vector3& p, const Vector3& t, int w, int h) {
+	Camera(const Vector3& p, const Vector3& t) {
 		position = p;
 		target = t;
+		direction = normalize(t - p);
+	}
+	
+	void setSize(int w, int h) {
 		width  = w;
 		height = h;
 
-		direction = normalize(t - p);
 		float fov = M_PI / 180.f * 45.f;
 		
 		const Vector3 vec_up = Vector3(0.0f, 1.0f, 0.0f);
@@ -113,7 +116,7 @@ struct Primitive {
 
 struct Sphere : Primitive {	
 
-	Sphere(const char *n, Vector3 c, float r, Vector3 col, Vector3 e, int m) : Primitive(n) {
+	Sphere(const char *n, const Vector3& c, float r, const Vector3& col, const Vector3& e, int m) : Primitive(n) {
 		name = n;
 		center = c;
 		radius = r;
@@ -122,7 +125,7 @@ struct Sphere : Primitive {
 		material = m;
 	}
 
-	float Intersect(Ray r) {
+	float Intersect(const Ray& r) {
 		Vector3 v = r.origin - center;
 		
 		float a = r.direction * r.direction;
@@ -197,8 +200,8 @@ struct Scene {
 		delete light_vec;
 	}
 	
-	Scene(int width, int height) {
-		static Camera cornellCamera = Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f), width, height);		
+	Scene() {
+		static Camera cornellCamera = Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f));		
 		static Sphere cornellSpheres[] = {
 			Sphere("left",		Vector3(1e4f + 1.f, 40.8f, 81.6f), 		1e4f,	Vector3(.75f, .25f, .25f),	vec_zero,	DIFF),
 			Sphere("right",		Vector3(-1e4f + 99.f, 40.8f, 81.6f),	1e4f,	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF),
@@ -244,239 +247,85 @@ struct Scene {
 		
 		return ret;
 	}
+	
+	void tick() {
+		
+		// bounce the ligth!
+		Sphere *light = light_vec->at(0);
+		static float vel_y = 0.f;
+		const float acce_y = 0.8f;
+		if (light->center.y < light->radius + vel_y) {
+			vel_y *= -1.f;
+		} else {
+			vel_y += acce_y;
+		}
+		light->center.y -= vel_y;
+
+		static float vel_x = 2.f;
+		if ((light->center.x < light->radius) || (light->center.x > 100.f - light->radius)) {
+			vel_x *= -1.f;
+		}
+		light->center.x -= vel_x;
+
+	}
 };
 
-Vector3 sampleLightsV(const Ray& ray, const Vector3& hitPoint, const Vector3& normal, Scene *scene, int numsamples, bool stochastic) {
-	Vector3 total = vec_zero;
 
-	for (sphere_vec_t::iterator it = scene->light_vec->begin(); it != scene->light_vec->end(); ++it) {
-		Sphere *l = *it;
+
+
+
+
+
+struct RayTracer {
+
+	Scene *scene;
+	int width;
+	int height;
+	int max_depth;
+	int pixel_samples;
+	int light_samples;
+	bool soft_shadows;
+	
+	RGBA *fb;
+
+	RayTracer(Scene *s, int w, int h, int md, int ps, int ls, bool ss) {
+		scene = s;
+		width = w;
+		height = h;
+		max_depth = md;
+		pixel_samples = ps;
+		light_samples = ls;
+		soft_shadows = ss;
+
+		fb = (RGBA *)calloc(width * height, sizeof(RGBA)); // includes RGBA, clears memory
+	}
+
+	void rayTrace() {
+		int sample_dir = sqrt(pixel_samples);
+
+		scene->camera->setSize(width, height);
 		
-		Vector3 illumination = vec_zero;
-		
-		for(int j =0; j < numsamples; j ++) {
-			// the default light point is the center of the sphere
-			Vector3 spherePoint = vec_zero;
-		
-			// chooses a random point over the sphere
-			if (stochastic) {
-				spherePoint = l->uniformSampleSphere(frandom(), frandom());
-				// TODO: check and correct if the point is at the other side of the sphere
-			// special case for 1 sample, the centre of the light (whitted)
-			// for the rest, distributed over the sphere
-			} else if (numsamples > 1) {
-				float t = float(j) / numsamples;
-				spherePoint = l->uniformSampleSphere(t, t);
-			}
-
-			// creates a shadow ray, the light point should be inside of the light sphere
-			// the origin is just a little bit away from the surface
-			Vector3 lightPoint = l->center + spherePoint * (l->radius - FLT_EPSILON);
-			Vector3 lightVector = lightPoint - hitPoint;
-			Vector3 origin = hitPoint + normal * (1.f + FLT_EPSILON);
-			Ray shadowRay = Ray(origin, lightVector);
-
-			float distance;
-			Sphere *s = scene->intersectRay(shadowRay, distance);
-
-			// the nearest intersection should be the light
-			if (s == l) {
-				// normalized light vector
-				Vector3 normalLightVector = normalize(lightVector);
-				
-				// lambert cosine (diffuse component)
-				float lambert = std::max(0.f, normal * normalLightVector);
-
-				// phong illumination (specular component)
-				float nshiny = 8.f; // the higher the smaller the spot
-				/*
-				Vector3 normalReflect = normalize(reflectVector(ray.direction, normal));
-				float phong = powf(std::max(0.f, normalReflect * normalLightVector), nshiny);
-				*/
-				// blinn & torrance alternative to phong (faster to compute, similar)
-				float blinn = powf(normalize(lightVector+ray.direction) * normal, nshiny * 2.f); 
-
-				// lenght of the light vector
-				float attenuation = sqrtf(lightVector * lightVector);
-				Vector3 contribution = l->emission * (lambert + blinn) * 0.5f / attenuation;
-
-				illumination = illumination + contribution;
-			}
-		}
-
-			// averages illumination over the samples
-		total = total + illumination / numsamples;
-	};
-	
-	return total;
-}
-
-Vector3 sampleRay(Ray& ray, Scene *scene, int depth, int light_samples, int stochastic) {
-	
-	Vector3 sample = vec_zero;
-
-	if (depth-- == 0) {
-		return sample;
-	}
-	
-	float distance;
-	Sphere *s = scene->intersectRay(ray, distance);
-	if (s == NULL) {
-		return sample;
-	} else if (s->isLight()) {
-		return s->emission;
-	}
-
-	Vector3 illumination = vec_zero;
-	Vector3 hitPoint = ray.origin + distance * ray.direction;
-	Vector3 normal = s->Normal(hitPoint);
-	Vector3 color = s->color;
-	int material = s->material;
-	
-	switch(material) {
-		case CHECKER: {
-			float u,v;
+	#pragma omp parallel for schedule(dynamic,1)
+		for (int y = 0; y < height; y ++) {
+			for (int x = 0; x < width; x ++) {
+				Vector3 sample = vec_zero;
 			
-			s->getTextUV(hitPoint, u, v);
-			
-			int a = int(u * 8.f) % 2;
-			int b = int(v * 8.f) % 2;
-			color = (a ^ b)? color * 0.6f : color;
-		}
-		// NOTE THE MISSING BREAK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		case DIFF: {
-			
-			// we want also to illuminate the inside of the sphere, so we
-			// will invert the normal if we are inside of the sphere (i.e. the ray origin is inside it)
-			// rationale: if they are in the same direction, the cos/dot is positive
-			if (normal * ray.direction > 0.f) {
-				normal = -1.f * normal;
-			}
-			illumination = sampleLightsV(ray, hitPoint, normal, scene, light_samples, stochastic);
-
-			// lambert model
-			Vector3 ambient = Vector3(1.0f, 1.0f, 1.0f) * 0.7f;
-			Vector3 intensity = ambient + illumination;
-			sample = color.cmul(intensity);
-		}
-		break;
-		case SPEC: {
-			// as before, we want to reflect the interior of a sphere the same
-			if (normal * ray.direction > 0.f) {
-				normal = -1.f * normal;
-			}
-
-			Ray reflected = ray.reflect(hitPoint, normal);
-			sample = sampleRay(reflected, scene, depth, light_samples, stochastic).cmul(color);
-		}
-		break;
-		case REFR: {
-			float n1 = 1.f;  // air
-			float n2 = 1.5f; // cristal
-			
-			float cosI = -1.f * ray.direction * normal;
-			// if the ray and the normal are on the same direction
-			// we flip the normal, invert the cosine and make the transition n2 -> n1
-			if (cosI < 0.f) {
-				normal = -1.f * normal;
-				cosI = -cosI;
-				float tmp = n1; n1 = n2; n2 = tmp;
-			}
-			float n = n1 / n2;
-
-			float cosT2 = 1.0f - n * n * (1.0f - cosI * cosI);
-			// total internal reflection
-			if (cosT2 < 0.f) {
-				Ray reflected = ray.reflect(hitPoint, normal);
-				sample = sampleRay(reflected, scene, depth, light_samples, stochastic);
-			} else {
-				float cosT = sqrtf(cosT2);
-
-				// Fresnell's equations, per polarization (averaged)
-				float perp = pow((n1 * cosI - n2 * cosT) / (n1 * cosI + n2 * cosT), 2.f);
-				float para = pow((n2 * cosI - n1 * cosT) / (n2 * cosI + n1 * cosT), 2.f);
-				float fres = (perp + para) / 2.f;
-
-				Ray reflected = ray.reflect(hitPoint, normal);
-				sample = fres * sampleRay(reflected, scene, depth, light_samples, stochastic);
-				
-				Ray refracted = Ray(hitPoint - normal * (1.f + FLT_EPSILON), n * ray.direction + (n * cosI - cosT) * normal);
-				sample = sample + (1.f - fres) * sampleRay(refracted, scene, depth, light_samples, stochastic);
-				
-				sample = sample.cmul(color);
-			}
-		}
-		break;
-	}
-		
-	return sample;
-}
-
-
-
-#define RES_X 256
-#define RES_Y RES_X
-#define MAX_DEPTH 6
-#define PIXEL_SAMPLES 1
-#define LIGHT_SAMPLES 1
-#define STOCHASTIC_PIXEL_SAMPLING false
-#define STOCHASTIC_LIGHT_SAMPLING false
-
-void *rayTrace(int width, int height) {
-	
-//	srand((unsigned)time(0));
-	static Scene scene = Scene(width, height);
-
-	RGBA *fb = (RGBA *)calloc(width * height, sizeof(RGBA)); // includes RGBA, clears memory
-	int sample_dir = sqrt(PIXEL_SAMPLES);
-
-	// bounce the ligth!
-	Sphere *light = &scene.spheres[scene.numspheres - 1];
-	static float vel_y = 0.f;
-	const float acce_y = 0.8f;
-	if (light->center.y < light->radius + vel_y) {
-		vel_y *= -1.f;
-	} else {
-		vel_y += acce_y;
-	}
-	light->center.y -= vel_y;
-
-	static float vel_x = 2.f;
-	if ((light->center.x < light->radius) || (light->center.x > 100.f - light->radius)) {
-		vel_x *= -1.f;
-	}
-	light->center.x -= vel_x;
-
-
-#pragma omp parallel for schedule(dynamic,1)
-	for (int y = 0; y < height; y ++) {
-		for (int x = 0; x < width; x ++) {
-
-			Vector3 sample = vec_zero;
-			
-			// antialias
-			for (int sy = 0; sy < sample_dir; sy ++) {
-				for (int sx = 0; sx < sample_dir; sx ++) {
-					float dx = x;
-					float dy = y;
+				for (int sy = 0; sy < sample_dir; sy ++) {
+					for (int sx = 0; sx < sample_dir; sx ++) {
+						float dx = x;
+						float dy = y;
 					
-					if (sample_dir > 1) {
-						if (STOCHASTIC_PIXEL_SAMPLING != 0){
-							dx += (frandom() - 0.5f);
-							dy += (frandom() - 0.5f);
-						} else {
+						if (sample_dir > 1) {
 							dx += float(sx) / sample_dir;
 							dy += float(sy) / sample_dir;
 						}
-					}
 					
-					Ray eyeRay = scene.camera->createRay(dx, dy);
-					sample = sample + sampleRay(eyeRay, &scene, MAX_DEPTH, LIGHT_SAMPLES, STOCHASTIC_LIGHT_SAMPLING);
-				}
-			}	
-			//#pragma omp critical
-			{
-				sample = sample * 1.f / (PIXEL_SAMPLES);
+						Ray eyeRay = scene->camera->createRay(dx, dy);
+						sample = sample + sampleRay(eyeRay, max_depth);
+					}
+				}	
+				
+				sample = sample * 1.f / (pixel_samples);
 
 				// gamma correction, exposure
 				RGBA::exposure(sample, -2.f);
@@ -487,15 +336,191 @@ void *rayTrace(int width, int height) {
 		}
 	}
 	
-	// tone mapping
+	Vector3 sampleRay(Ray& ray, int depth) {
 
-	return fb;	
-}
+		Vector3 sample = vec_zero;
+
+		if (depth-- == 0) {
+			return sample;
+		}
+
+		float distance;
+		Sphere *s = scene->intersectRay(ray, distance);
+		
+		if (s == NULL) {
+			return sample;
+		} else if (s->isLight()) {
+			return s->emission;
+		}
+
+		Vector3 illumination = vec_zero;
+		Vector3 hitPoint = ray.origin + distance * ray.direction;
+		Vector3 normal = s->Normal(hitPoint);
+		Vector3 color = s->color;
+		int material = s->material;
+
+		switch(material) {
+			case CHECKER: {
+				float u,v;
+
+				s->getTextUV(hitPoint, u, v);
+
+				int a = int(u * 8.f) % 2;
+				int b = int(v * 8.f) % 2;
+				color = (a ^ b)? color * 0.6f : color;
+			}
+			// NOTE THE MISSING BREAK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+			case DIFF: {
+
+				// we want also to illuminate the inside of the sphere, so we
+				// will invert the normal if we are inside of the sphere (i.e. the ray origin is inside it)
+				// rationale: if they are in the same direction, the cos/dot is positive
+				if (normal * ray.direction > 0.f) {
+					normal = -1.f * normal;
+				}
+				illumination = sampleLights(ray, hitPoint, normal);
+
+				// lambert model
+				Vector3 ambient = Vector3(1.0f, 1.0f, 1.0f) * 0.7f;
+				Vector3 intensity = ambient + illumination;
+				sample = color.cmul(intensity);
+			}
+			break;
+			case SPEC: {
+				// as before, we want to reflect the interior of a sphere the same
+				if (normal * ray.direction > 0.f) {
+					normal = -1.f * normal;
+				}
+
+				Ray reflected = ray.reflect(hitPoint, normal);
+				sample = sampleRay(reflected, depth).cmul(color);
+			}
+			break;
+			case REFR: {
+				float n1 = 1.f;  // air
+				float n2 = 1.5f; // cristal
+
+				float cosI = -1.f * ray.direction * normal;
+				// if the ray and the normal are on the same direction
+				// we flip the normal, invert the cosine and make the transition n2 -> n1
+				if (cosI < 0.f) {
+					normal = -1.f * normal;
+					cosI = -cosI;
+					float tmp = n1; n1 = n2; n2 = tmp;
+				}
+				float n = n1 / n2;
+
+				float cosT2 = 1.0f - n * n * (1.0f - cosI * cosI);
+				// total internal reflection
+				if (cosT2 < 0.f) {
+					Ray reflected = ray.reflect(hitPoint, normal);
+					sample = sampleRay(reflected, depth);
+				} else {
+					float cosT = sqrtf(cosT2);
+
+					// Fresnell's equations, per polarization (averaged)
+					float perp = pow((n1 * cosI - n2 * cosT) / (n1 * cosI + n2 * cosT), 2.f);
+					float para = pow((n2 * cosI - n1 * cosT) / (n2 * cosI + n1 * cosT), 2.f);
+					float fres = (perp + para) / 2.f;
+
+					Ray reflected = ray.reflect(hitPoint, normal);
+					sample = fres * sampleRay(reflected, depth);
+
+					Ray refracted = Ray(hitPoint - normal * (1.f + FLT_EPSILON), n * ray.direction + (n * cosI - cosT) * normal);
+					sample = sample + (1.f - fres) * sampleRay(refracted, depth);
+
+					sample = sample.cmul(color);
+				}
+			}
+			break;
+		}
+
+		return sample;
+	}
+	
+	Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& normal) {
+		Vector3 total = vec_zero;
+
+		for (sphere_vec_t::iterator it = scene->light_vec->begin(); it != scene->light_vec->end(); ++it) {
+			Sphere *l = *it;
+
+			Vector3 illumination = vec_zero;
+
+			for(int j =0; j < light_samples; j ++) {
+				// the default light point is the center of the sphere
+				Vector3 spherePoint = vec_zero;
+
+				// chooses a random point over the sphere
+				if (soft_shadows) {
+					spherePoint = l->uniformSampleSphere(frandom(), frandom());
+					// TODO: check and correct if the point is at the other side of the sphere
+				// special case for 1 sample, the centre of the light (whitted)
+				// for the rest, distributed over the sphere
+				} else if (light_samples > 1) {
+					float t = float(j) / light_samples;
+					spherePoint = l->uniformSampleSphere(t, t);
+				}
+
+				// creates a shadow ray, the light point should be inside of the light sphere
+				// the origin is just a little bit away from the surface
+				Vector3 lightPoint = l->center + spherePoint * (l->radius - FLT_EPSILON);
+				Vector3 lightVector = lightPoint - hitPoint;
+				Vector3 origin = hitPoint + normal * (1.f + FLT_EPSILON);
+				Ray shadowRay = Ray(origin, lightVector);
+
+				float distance;
+				Sphere *s = scene->intersectRay(shadowRay, distance);
+
+				// the nearest intersection should be the light
+				if (s == l) {
+					// normalized light vector
+					Vector3 normalLightVector = normalize(lightVector);
+
+					// lambert cosine (diffuse component)
+					float lambert = std::max(0.f, normal * normalLightVector);
+
+					// phong illumination (specular component)
+					float nshiny = 8.f; // the higher the smaller the spot
+					/*
+					Vector3 normalReflect = normalize(reflectVector(ray.direction, normal));
+					float phong = powf(std::max(0.f, normalReflect * normalLightVector), nshiny);
+					*/
+					// blinn & torrance alternative to phong (faster to compute, similar)
+					float blinn = powf(normalize(lightVector+ray.direction) * normal, nshiny * 2.f); 
+
+					// lenght of the light vector
+					float attenuation = sqrtf(lightVector * lightVector);
+					Vector3 contribution = l->emission * (lambert + blinn) * 0.5f / attenuation;
+
+					illumination = illumination + contribution;
+				}
+			}
+
+				// averages illumination over the samples
+			total = total + illumination / light_samples;
+		};
+
+		return total;
+	}
+};
+
+#define RES_X 256
+#define RES_Y RES_X
+#define MAX_DEPTH 6
+#define PIXEL_SAMPLES 4
+#define LIGHT_SAMPLES 1
+#define STOCHASTIC_PIXEL_SAMPLING false
+#define STOCHASTIC_LIGHT_SAMPLING false
+
+// Render and scene
+RayTracer *rayTracer;
+Scene *scene;
 
 // GLUT, OpenGL related functions
 GLuint textid = 0;
 char label[256];
 int screen_w, screen_h;
+
 
 void reshape(int width, int height) {
 	screen_w = width;
@@ -550,20 +575,26 @@ void idle() {
 	}
 	
 	clock_t tick = clock();
-	void *data = rayTrace(RES_X, RES_Y);
+	
+	rayTracer->rayTrace();
+	scene->tick();	
+	
 	float seconds = float(clock() - tick) / CLOCKS_PER_SEC;
 	sprintf(label, "size: (%d, %d), frame: %0.3fs, samples: %d", RES_X, RES_Y, seconds, PIXEL_SAMPLES);	
 	
 	glBindTexture(GL_TEXTURE_2D, textid);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, RES_X, RES_Y, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
-	free(data);	
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, RES_X, RES_Y, 0, GL_RGBA, GL_UNSIGNED_BYTE, rayTracer->fb);
 	
 	glutPostRedisplay();
 }
 
 int main(int argc, char **argv) {
+	
+	scene = new Scene();
+	rayTracer = new RayTracer(scene, RES_X, RES_X , MAX_DEPTH, PIXEL_SAMPLES, LIGHT_SAMPLES, STOCHASTIC_LIGHT_SAMPLING);
+	
 	glutInit(&argc, argv);
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_ALPHA);
 	glutInitWindowSize(1024, 1024);
