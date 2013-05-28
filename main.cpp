@@ -126,9 +126,81 @@ struct Primitive {
 
 	virtual float getDistance(const Ray& r) = 0;
 	virtual void getTextureCoordinates(const Vector3& point, float& u, float &v) = 0;
-	virtual Vector3 getNormal(const Vector3& spherePoint) = 0 ;
+	virtual Vector3 getNormal(const Vector3& point) = 0 ;
 	virtual Vector3 getSurfacePoint(const float u1, const float u2) = 0;
 	virtual Vector3 getCenter() = 0;
+};
+
+struct AABB : Primitive {
+
+	Vector3 min;
+	Vector3 max;
+
+	AABB(const char *n, const Vector3& a, const Vector3& b, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
+		min.x = std::min(a.x, b.x);
+		min.y = std::min(a.y, b.y);
+		min.z = std::min(a.z, b.z);
+		max.x = std::max(a.x, b.x);
+		max.y = std::max(a.y, b.y);
+		max.z = std::max(a.z, b.z);
+	}
+	
+	Vector3 getCenter() {
+		return (min + max) * 0.5;
+	}
+	
+	Vector3 getSurfacePoint(const float u1, const float u2) {
+		// TODO!!
+		return getCenter();
+	}
+
+	// TO BE CHECKED!! assumes a point on the surface
+	Vector3 getNormal(const Vector3& point) {
+		Vector3 normal = vec_zero;
+		
+		for (int i = 0; i < 3; i++) {
+			if (fabs(point[i] - min[i]) < FLT_EPSILON) {
+				normal[i] = -1.f;
+			} else if (fabs(point[i] - max[i]) < FLT_EPSILON) {
+				normal[i] = 1.f;
+			}
+		}
+		
+		return normal;
+	}
+	
+	// TODO!!
+	void getTextureCoordinates(const Vector3& point, float& u, float &v) {
+		u = v = 0.f;
+	}
+	
+	float getDistance(const Ray& r) {
+		Vector3 tmin, tmax;
+		
+		tmin = (min - r.origin).cdiv(r.direction);
+		tmax = (max - r.origin).cdiv(r.direction);
+		
+		for (int i = 0; i < 3; i ++)
+			if (tmin[i] > tmax[i])
+				swap(tmin[i], tmax[i]);
+
+		float dmin = tmin.x;
+		float dmax = tmax.x;
+
+		if ((dmin > tmax.y) || (tmin.y > dmax))
+			return -1.f;
+
+		dmin = std::max(dmin, tmin.y);
+		dmax = std::min(dmax, tmax.y);
+		
+		if ((dmin > tmax.z) || (tmin.z > dmax))
+			return -1.f;
+		
+		dmin = std::max(dmin, tmin.z);
+		dmax = std::min(dmax, tmax.z);
+		
+		return dmin;
+	}
 };
 
 
@@ -277,6 +349,9 @@ struct Scene {
 		sphere_vec->push_back(new Plane("left",		Vector3(0.f, 0.f, 0.f),		Vector3(1.f, 0.f, 0.f),		Vector3(.75f, .25f, .25f),	vec_zero,	DIFF));
 		sphere_vec->push_back(new Plane("back",		Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, -1.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
 //		sphere_vec->push_back(new Plane("front",	Vector3(0.f, 0.f, 20.f), Vector3(0.f, 0.f, 1.f),	vec_zero,		vec_zero,	DIFF));
+
+		sphere_vec->push_back(new AABB("box",		Vector3(0.f, 0.f, 80.f),	Vector3(80.f, 5.f, 20.f),	Vector3(.75f, .75f, .75f),	vec_zero,	SPEC));
+
 		
 		for (sphere_vec_t::iterator it = sphere_vec->begin(); it != sphere_vec->end(); ++it) {
 			if ((*it)->isLight()) {
@@ -354,7 +429,7 @@ struct RayTracer {
 		light_samples = ls;
 		soft_shadows = ss;
 
-		fb = (RGBA *)calloc(width * height, sizeof(RGBA)); // includes RGBA, clears memory
+		fb = (RGBA *)calloc(width * height, sizeof(RGBA));
 	}
 
 	void rayTrace() {
