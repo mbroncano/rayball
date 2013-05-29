@@ -26,6 +26,7 @@ template <typename T> int sign(T val) {
     return (T(0) < val) - (val < T(0));
 }
 
+
 union RGBA{
 	uint32_t rgba;
 	struct { uint8_t r, g, b, a; };
@@ -106,6 +107,28 @@ struct Camera {
 	
 };
 
+struct Material {
+	Vector3 color; // diffuse color
+	Vector3 emission; // luminance
+	float specular; // reflection coefficient
+	float transparency; // transmission coefficient
+	float refractive; // material's index of refraction (i.e. 1 for air, 1.3 for water, 1.5 for glass)
+	
+	Material(const Vector3& c, const Vector3& e = vec_zero, float s = 0.f, float t = 0.f, float r = 1.f) {
+		color = c;
+		emission = e;
+		specular = s;
+		transparency = t;
+		refractive = r;
+	}
+	
+	static Material Mirror, Glass;
+};
+
+// some useful defaults
+Material Material::Mirror = Material(Vector3(0.9f, 0.9f, 0.9f), vec_zero, 1.0f);
+Material Material::Glass = Material(Vector3(0.9f, 0.9f, 0.9f), vec_zero, 0.f, 1.f, 1.5f);
+
 struct Primitive {
 	const char *name;
 
@@ -114,13 +137,14 @@ struct Primitive {
 	Vector3 color;
 	Vector3 emission;
 	int material;
+	int scale; // checker scale
 
 	Primitive(const char *n, const Vector3& col, const Vector3& e, int m) {
 		name = n;
 		color = col;
 		emission = e;
 		material = m;
-		
+		scale = 6.f;
 		vel = vec_zero;
 	}
 
@@ -163,14 +187,17 @@ struct Triangle : Primitive {
 		return normal; 
 	}
 	
-	// TODO
-	Vector3 getSurfacePoint(const float u1, const float u2) {
-		return vec_zero;
+	Vector3 getSurfacePoint(const float u, const float v) {
+		return p[0] + edge[0]*u + edge[1]*v;
 	}
-	
-	// TODO: get them from getDistance
+
+	// we could get them for free from getDistance
 	void getTextureCoordinates(const Vector3& point, float& u, float &v) {
-		u = v = 0;
+		float l0 = length(edge[0]); // precalculate those
+		float l1 = length(edge[1]);
+		
+		u = point * edge[0] / (l0 * l0);
+		v = point * edge[1] / (l1 * l1);
 	}
 	
 	// Moller - Trumbore method
@@ -404,17 +431,17 @@ ostream& operator<< (ostream& os, const Primitive& p) {
 	return os;
 } 
 
-ostream& operator<< (ostream& os, const Sphere& s) {
-	os << "[Sphere: " << s.name << "]";
+ostream& operator<< (ostream& os, const Vector3& p) {
+	os << "[Vector: (" << p.x << ", " << p.y << ", " << p.z << ")]";
 	return os;
 } 
-
 
 enum {
 	DIFF, SPEC, REFR, CHECKER
 };
 
 typedef vector<Primitive *> sphere_vec_t;
+
 
 struct Scene {
 	Camera *camera;	
@@ -433,10 +460,10 @@ struct Scene {
 		light_vec = new sphere_vec_t();
 
 		sphere_vec->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,			SPEC));
-//		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,			CHECKER));
+		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,			CHECKER));
 		sphere_vec->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,			REFR));
 
-		sphere_vec->push_back(new Sphere("light",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(12.f, 12.f, 12.f),	DIFF));
+	//	sphere_vec->push_back(new Sphere("light",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(12.f, 12.f, 12.f),	DIFF));
 		/*
 		sphere_vec->push_back(new Sphere("light r",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(48.f, 1.f, 1.f),	DIFF));
 		sphere_vec->push_back(new Sphere("light b",	Vector3(40.f, 71.6f - 15.f, 71.6f), 	7.f,	vec_zero,			 Vector3(1.f, 1.f, 48.f),	DIFF));
@@ -450,8 +477,10 @@ struct Scene {
 */
 //		sphere_vec->push_back(new Plane("front",	Vector3(0.f, 0.f, 20.f), Vector3(0.f, 0.f, 1.f),	vec_zero,		vec_zero,	DIFF));
 
-		sphere_vec->push_back(new AABB("top light",		Vector3(40.f, 80.f, 40.f),	Vector3(60.f, 85.f, 60.f),	Vector3(.25f, .75f, .75f),	Vector3(12.f, 12.f, 12.f),	DIFF));
-//		sphere_vec->push_back(new AABB("water",		Vector3(0.f, 0.f, 0.f),	Vector3(100.f, 25.f, 90.f),	Vector3(.25f, .75f, .75f),	vec_zero,	REFR));
+//		sphere_vec->push_back(new AABB("water",		Vector3(0.f, 0.f, 0.f),	Vector3(100.f, 5.f, 90.f),	Vector3(.25f, .75f, .75f),	vec_zero,	REFR));
+		sphere_vec->push_back(new Square("light",	Vector3(40.f, 81.f, 40.f),
+													Vector3(40.f, 81.f, 60.f),
+													Vector3(60.f, 81.f, 40.f),	Vector3(.25f, .75f, .75f),	Vector3(12.f, 12.f, 12.f),	DIFF));
 		
 		sphere_vec->push_back(new Square("floor",	Vector3(0.f, 0.f, 0.f),
 													Vector3(0.f, 0.f, 100.f), 
@@ -471,7 +500,7 @@ struct Scene {
 
 		sphere_vec->push_back(new Square("right",	Vector3(100.f, 0.f, 0.f),
 													Vector3(100.f, 81.6f, 0.f), 
-													Vector3(100.f, 0.f, 100.f),	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF));
+													Vector3(100.f, 0.f, 100.f),	Vector3(.25f, .25f, .75f),	vec_zero,	CHECKER));
 		
 
 		
@@ -484,6 +513,7 @@ struct Scene {
 		camera = new Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f));
 	}
 	
+	// TODO: implement kd-trees or BVH
 	Primitive *intersectRay(const Ray& r, float& distance) {
 		distance = FLT_MAX;
 		Primitive *ret = NULL;
@@ -533,7 +563,6 @@ struct Scene {
 	}
 };
 
-
 struct RayTracer {
 
 	Scene *scene;
@@ -570,13 +599,8 @@ struct RayTracer {
 			
 				for (int sy = 0; sy < sample_dir; sy ++) {
 					for (int sx = 0; sx < sample_dir; sx ++) {
-						float dx = x;
-						float dy = y;
-					
-						if (sample_dir > 1) {
-							dx += float(sx) / sample_dir;
-							dy += float(sy) / sample_dir;
-						}
+						float dx = x + float(sx) / sample_dir;
+						float dy = y + float(sy) / sample_dir;
 					
 						Ray eyeRay = scene->camera->createRay(dx, dy);
 						sample = sample + sampleRay(eyeRay, max_depth);
@@ -622,9 +646,10 @@ struct RayTracer {
 				float u,v;
 
 				s->getTextureCoordinates(hitPoint, u, v);
+				int scale = s->scale;
 
-				int a = int(u * 8.f) % 2;
-				int b = int(v * 8.f) % 2;
+				int a = int(u * scale) % 2;
+				int b = int(v * scale) % 2;
 				color = (a ^ b)? color * 0.6f : color;
 			}
 			// NOTE THE MISSING BREAK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -704,13 +729,15 @@ struct RayTracer {
 
 			Vector3 illumination = vec_zero;
 
-			for(int j =0; j < light_samples; j ++) {
+			for(int j = 0; j < light_samples; j ++) {
 				// the default light point is the center of the sphere
 				Vector3 lightPoint;
 
 				// chooses a random point over the sphere
 				if (soft_shadows) {
-					lightPoint = l->getSurfacePoint(frandom(), frandom());
+					float u = frandom();
+					float v = frandom();
+					lightPoint = l->getSurfacePoint(u, v);
 					// TODO: check and correct if the point is at the other side of the sphere
 				// special case for 1 sample, the centre of the light (whitted)
 				// for the rest, distributed over the sphere
@@ -766,7 +793,7 @@ struct RayTracer {
 #define RES_X 256
 #define RES_Y RES_X
 #define MAX_DEPTH 6
-#define PIXEL_SAMPLES 4
+#define PIXEL_SAMPLES 1
 #define LIGHT_SAMPLES 1
 #define STOCHASTIC_LIGHT_SAMPLING false
 
