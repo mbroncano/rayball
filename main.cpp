@@ -22,6 +22,10 @@ float frandom() {
 	return (float)rand()/(float)RAND_MAX;
 }
 
+template <typename T> int sign(T val) {
+    return (T(0) < val) - (val < T(0));
+}
+
 union RGBA{
 	uint32_t rgba;
 	struct { uint8_t r, g, b, a; };
@@ -131,18 +135,112 @@ struct Primitive {
 	virtual Vector3 getCenter() = 0;
 };
 
+struct Triangle : Primitive {
+
+	Vector3 p[3]; // points
+	Vector3 edge[2]; // edges
+	Vector3 center;
+	Vector3 normal;
+	
+	Triangle (const char *n, const Vector3& a, const Vector3& b,const Vector3& c, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
+		p[0] = a;
+		p[1] = b;
+		p[2] = c;
+		
+		center = (a + b + c) / 3.f;
+		normal = normalize((b - a) ^ (c - a));
+
+		edge[0] = p[1] - p[0];
+		edge[1] = p[2] - p[0];
+	}
+	
+	Vector3 getCenter() {
+		return center;
+	}
+	
+	// no phong interpolation here
+	Vector3 getNormal(const Vector3& point) {
+		return normal; 
+	}
+	
+	// TODO
+	Vector3 getSurfacePoint(const float u1, const float u2) {
+		return vec_zero;
+	}
+	
+	// TODO: get them from getDistance
+	void getTextureCoordinates(const Vector3& point, float& u, float &v) {
+		u = v = 0;
+	}
+	
+	// Moller - Trumbore method
+	// http://www.cs.virginia.edu/~gfx/Courses/2003/ImageSynthesis/papers/Acceleration/Fast%20MinimumStorage%20RayTriangle%20Intersection.pdf
+	float getDistance(const Ray& r) {
+		float d, u, v;
+		
+		Vector3 t = (r.origin - p[0]);
+		Vector3 p = (r.direction ^ edge[1]);
+		
+		float det1 = p * edge[0];
+		if (fabs(det1) < FLT_EPSILON) {
+			return -1.f;
+		} else {
+			float u = (p * t) / det1;
+			if (u < 0.f || u > 1.f)
+				return -1.f;
+
+			Vector3 q = (t ^ edge[0]);
+			float v = (q * r.direction) / det1;
+			if (v < 0.f || (u + v) > 1.f)
+				return -1.f;
+
+			return (q * edge[1]) / det1;
+		}
+	}
+};
+
+struct Square : Triangle {
+	
+	Square (const char *n, const Vector3& a, const Vector3& b,const Vector3& c, const Vector3& col, const Vector3& e, int m) : Triangle(n, a, b, c, col, e, m) {};
+	
+	// slightly changed from the triangle
+	float getDistance(const Ray& r) {
+		float d, u, v;
+
+		Vector3 t = (r.origin - p[0]);
+		Vector3 p = (r.direction ^ edge[1]);
+
+		float det1 = p * edge[0];
+		if (fabs(det1) < FLT_EPSILON) {
+			return -1.f;
+		} else {
+			float u = (p * t) / det1;
+			if (u < 0.f || u > 1.f)
+				return -1.f;
+
+			Vector3 q = (t ^ edge[0]);
+			float v = (q * r.direction) / det1;
+			if (v < 0.f || v > 1.f)
+				return -1.f;
+
+			return (q * edge[1]) / det1;
+		}
+	}
+};
+
 struct AABB : Primitive {
 
 	Vector3 min;
 	Vector3 max;
+	Vector3 center;
 
 	AABB(const char *n, const Vector3& a, const Vector3& b, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
-		min.x = std::min(a.x, b.x);
-		min.y = std::min(a.y, b.y);
-		min.z = std::min(a.z, b.z);
-		max.x = std::max(a.x, b.x);
-		max.y = std::max(a.y, b.y);
-		max.z = std::max(a.z, b.z);
+		
+		for(int i =0; i < 3; i ++) {
+			min[i] = std::min(a[i], b[i]);
+			max[i] = std::max(a[i], b[i]);
+			center[i] = (min[i] + max[i]) * 0.5f;
+		}
 	}
 	
 	Vector3 getCenter() {
@@ -159,10 +257,10 @@ struct AABB : Primitive {
 		Vector3 normal = vec_zero;
 		
 		for (int i = 0; i < 3; i++) {
-			if (fabs(point[i] - min[i]) < FLT_EPSILON) {
-				normal[i] = -1.f;
-			} else if (fabs(point[i] - max[i]) < FLT_EPSILON) {
+			if (point[i] > max[i]) {
 				normal[i] = 1.f;
+			} else if (point[i] < min[i]) {
+				normal[i] = -1.f;
 			}
 		}
 		
@@ -335,22 +433,46 @@ struct Scene {
 		light_vec = new sphere_vec_t();
 
 		sphere_vec->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,			SPEC));
-		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,			CHECKER));
+//		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,			CHECKER));
 		sphere_vec->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,			REFR));
+
 		sphere_vec->push_back(new Sphere("light",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(12.f, 12.f, 12.f),	DIFF));
 		/*
 		sphere_vec->push_back(new Sphere("light r",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(48.f, 1.f, 1.f),	DIFF));
 		sphere_vec->push_back(new Sphere("light b",	Vector3(40.f, 71.6f - 15.f, 71.6f), 	7.f,	vec_zero,			 Vector3(1.f, 1.f, 48.f),	DIFF));
 		sphere_vec->push_back(new Sphere("light g",	Vector3(30.f, 61.6f - 15.f, 61.6f), 	7.f,	vec_zero,			 Vector3(1.f, 48.f, 1.f),	DIFF));
 		*/
-		sphere_vec->push_back(new Plane("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 1.f, 0.f),		Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+/*		sphere_vec->push_back(new Plane("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 1.f, 0.f),		Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
 		sphere_vec->push_back(new Plane("top",		Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, -1.f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
 		sphere_vec->push_back(new Plane("right",	Vector3(99.f, 0.f, 0.f),	Vector3(-1.f, 0.f, 0.f),	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF));
 		sphere_vec->push_back(new Plane("left",		Vector3(0.f, 0.f, 0.f),		Vector3(1.f, 0.f, 0.f),		Vector3(.75f, .25f, .25f),	vec_zero,	DIFF));
 		sphere_vec->push_back(new Plane("back",		Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, -1.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+*/
 //		sphere_vec->push_back(new Plane("front",	Vector3(0.f, 0.f, 20.f), Vector3(0.f, 0.f, 1.f),	vec_zero,		vec_zero,	DIFF));
 
-		sphere_vec->push_back(new AABB("box",		Vector3(0.f, 0.f, 80.f),	Vector3(80.f, 5.f, 20.f),	Vector3(.75f, .75f, .75f),	vec_zero,	SPEC));
+		sphere_vec->push_back(new AABB("top light",		Vector3(40.f, 80.f, 40.f),	Vector3(60.f, 85.f, 60.f),	Vector3(.25f, .75f, .75f),	Vector3(12.f, 12.f, 12.f),	DIFF));
+//		sphere_vec->push_back(new AABB("water",		Vector3(0.f, 0.f, 0.f),	Vector3(100.f, 25.f, 90.f),	Vector3(.25f, .75f, .75f),	vec_zero,	REFR));
+		
+		sphere_vec->push_back(new Square("floor",	Vector3(0.f, 0.f, 0.f),
+													Vector3(0.f, 0.f, 100.f), 
+													Vector3(100.f, 0.f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+
+		sphere_vec->push_back(new Square("ceiling",	Vector3(0.f, 81.6f, 0.f),
+													Vector3(0.f, 81.6f, 100.f), 
+													Vector3(100.f, 81.6f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+
+		sphere_vec->push_back(new Square("back",	Vector3(0.f, 0.f, 0.f),
+													Vector3(0.f, 81.6f, 0.f), 
+													Vector3(100.f, 0.f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+
+		sphere_vec->push_back(new Square("left",	Vector3(0.f, 0.f, 0.f),
+													Vector3(0.f, 81.6f, 0.f), 
+													Vector3(0.f, 0.f, 100.f),	Vector3(.75f, .25f, .25f),	vec_zero,	DIFF));
+
+		sphere_vec->push_back(new Square("right",	Vector3(100.f, 0.f, 0.f),
+													Vector3(100.f, 81.6f, 0.f), 
+													Vector3(100.f, 0.f, 100.f),	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF));
+		
 
 		
 		for (sphere_vec_t::iterator it = sphere_vec->begin(); it != sphere_vec->end(); ++it) {
@@ -386,7 +508,11 @@ struct Scene {
 		
 		// animate lights
 		for (sphere_vec_t::iterator it = light_vec->begin(); it != light_vec->end(); ++it) {
-			Sphere *light = (Sphere *)*it;
+			Sphere *light = dynamic_cast<Sphere *>(*it);
+			
+			// only bouce spheres
+			if (light == NULL)
+				continue;
 
 			for (int i =0; i<3; i++) {
 				if ((light->center[i] < (aa[i] + light->radius*2)) || (light->center[i] > (bb[i] - light->radius*2))){
