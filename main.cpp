@@ -64,6 +64,39 @@ struct Camera {
 	}
 };
 
+struct Texture {
+	int width, height;
+	uint8_t *data;
+
+	Texture(const char *path) {
+		FILE *file = fopen(path, "r");
+		if (!file || fscanf(file, "P6\n%d %d\n255\n", &width, &height) != 2) {
+			cout << "Error opening file " << path << endl;
+			exit(1);
+		};
+		
+		int toread = width * height * 3;
+		data = (uint8_t *)malloc(toread);
+		if (fread(data, 1, toread, file) != toread) {
+			cout << "Error reading file contents" << path << endl;
+			exit(2);
+		}
+	}
+	
+	// TODO: bilinear filtering
+	Vector3 getPixelAt(float u, float v) {
+		int x = u * width;
+		int y = v * height;
+		
+		Vector3 ret;
+		int index = (y * width + x) * 3;
+		for (int i = 0; i < 3; i++) {
+			ret[i] = float(data[index + i]) / 255.f;
+		}
+		return ret;
+	}	
+};
+
 struct Material {
 	enum MaterialType {
 		Diffuse, Specular, Glass, Light
@@ -72,6 +105,7 @@ struct Material {
 	Vector3 color;
 	MaterialType type;
 	float checker; // HACK!
+	struct Texture *texture; // SUPER HACK!
 	
 	Material(const Vector3& c, const MaterialType t = Material::Diffuse) {
 		color = c;
@@ -282,6 +316,7 @@ struct Scene {
 		Material *Gray   = new Material(Vector3(.75f, .75f, .75f));
 		Material *Light  = new Material(Vector3(.9f, .9f, .9f), Material::Light);
 		Material *Green  = new Material(Vector3(.25f, .75f, .25f));
+		Material *Wood   = new Material(vec_zero);
  		Green->checker = 8.f;
 
 		materials->insert(Mirror);
@@ -291,6 +326,9 @@ struct Scene {
 		materials->insert(Gray);
 		materials->insert(Light);
 		materials->insert(Green);
+		
+		Texture *texture = new Texture("wood.ppm");
+		Wood->texture = texture;
 
 		spheres->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 16.5f,	Mirror));
 		spheres->push_back(new Sphere("ball",	Vector3(60.f, 16.5f, 30.f), 16.5f,	Green));
@@ -298,8 +336,8 @@ struct Scene {
 		spheres->push_back(new Sphere("blite",	Vector3(50.f, 70.f, 50.f),	7.f,	Light));
 		
 		spheres->push_back(new Square("light",	Vector3(40.f, 81.f, 40.f),	Vector3(40.f, 81.f, 60.f),	Vector3(60.f, 81.f, 40.f),	Light));
-		spheres->push_back(new Square("floor",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, 120.f),	Vector3(100.f, 0.f, 0.f),	Gray));
-		spheres->push_back(new Square("ceiling",	Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, 81.6f, 100.f), Vector3(100.f, 81.6f, 0.f),	Gray));
+		spheres->push_back(new Square("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, 120.f),	Vector3(100.f, 0.f, 0.f),	Wood));
+		spheres->push_back(new Square("top",	Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, 81.6f, 100.f), Vector3(100.f, 81.6f, 0.f),	Gray));
 		spheres->push_back(new Square("back",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 81.6f, 0.f),	Vector3(100.f, 0.f, 0.f),	Gray));
 		spheres->push_back(new Square("left",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, 0.f, 100.f),	Red));
 		spheres->push_back(new Square("right",	Vector3(100.f, 0.f, 0.f),	Vector3(100.f, 81.6f, 0.f),	Vector3(100.f, 0.f, 100.f),	Blue));
@@ -517,7 +555,15 @@ struct RayTracer {
 
 				Vector3 ambient = Vector3(1.0f, 1.0f, 1.0f) * 0.7f;
 				Vector3 intensity = ambient + illumination;
-				sample = m->color.cmul(intensity);
+				
+				// textured?
+				if (m->texture) {
+					float u, v;
+					s->getTextureCoordinates(hitPoint, u, v);
+					sample = m->texture->getPixelAt(u, v).cmul(intensity);
+				} else {
+					sample = m->color.cmul(intensity);
+				}
 
 				// Applies a simple checker texture over the previous result
 				if (m->checker > 0.f) {
