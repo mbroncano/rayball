@@ -22,11 +22,6 @@ float frandom() {
 	return (float)rand()/(float)RAND_MAX;
 }
 
-template <typename T> int sign(T val) {
-    return (T(0) < val) - (val < T(0));
-}
-
-
 union RGBA{
 	uint32_t rgba;
 	struct { uint8_t r, g, b, a; };
@@ -64,13 +59,14 @@ struct Ray {
 		origin = o;
 		direction = d;
 	}
-	
+/*	
 	inline Ray reflect(const Vector3& hitPoint, const Vector3 &normal) {
 		float cosI = -1.f * direction * normal;
 		
-		// applies the smallest offset over the hit point to be sure not to hit again the sphere
+		// applies the smallest offset over the hit point to be sure not to hit again the primitive
 		return Ray(hitPoint + normal * (1.f + FLT_EPSILON), direction + 2.f * cosI * normal);
 	}
+	*/
 };
 
 struct Camera {
@@ -87,11 +83,11 @@ struct Camera {
 		direction = normalize(t - p);
 	}
 	
-	void setSize(int w, int h) {
+	void setSize(int w, int h, float fov_angle = 45.f) {
 		width  = w;
 		height = h;
 
-		float fov = M_PI / 180.f * 45.f;
+		float fov = M_PI / 180.f * fov_angle;
 		
 		const Vector3 vec_up = Vector3(0.0f, 1.0f, 0.0f);
 		vec_x = normalize(direction ^ vec_up) * (width * fov / height);
@@ -104,7 +100,6 @@ struct Camera {
 		
 		return Ray(position, vec_x * fx + vec_y * fy + direction);
 	}
-	
 };
 
 struct Material {
@@ -113,6 +108,7 @@ struct Material {
 	float specular; // reflection coefficient
 	float transparency; // transmission coefficient
 	float refractive; // material's index of refraction (i.e. 1 for air, 1.3 for water, 1.5 for glass)
+	float checker; // checker texture
 	
 	Material(const Vector3& c, const Vector3& e = vec_zero, float s = 0.f, float t = 0.f, float r = 1.f) {
 		color = c;
@@ -120,37 +116,36 @@ struct Material {
 		specular = s;
 		transparency = t;
 		refractive = r;
+		
+		checker = 0.f;
 	}
 	
-	static Material Mirror, Glass;
-};
-
-// some useful defaults
-Material Material::Mirror = Material(Vector3(0.9f, 0.9f, 0.9f), vec_zero, 1.0f);
-Material Material::Glass = Material(Vector3(0.9f, 0.9f, 0.9f), vec_zero, 0.f, 1.f, 1.5f);
-
-struct Primitive {
-	const char *name;
-
-	Vector3 vel;
-
-	Vector3 color;
-	Vector3 emission;
-	int material;
-	int scale; // checker scale
-
-	Primitive(const char *n, const Vector3& col, const Vector3& e, int m) {
-		name = n;
-		color = col;
-		emission = e;
-		material = m;
-		scale = 6.f;
-		vel = vec_zero;
-	}
-
 	inline bool isLight() {
 		return emission.x != 0 || emission.y != 0 || emission.x != 0;
 	};
+
+	static Material Mirror, Glass, Light, Gray, Red, Blue, Green;
+};
+
+// some useful defaults
+Material Material::Mirror = Material(Vector3(.9f, .9f, .9f), vec_zero, 1.f);
+Material Material::Glass  = Material(Vector3(.9f, .9f, .9f), vec_zero, 0.f, 1.f, 1.5f);
+Material Material::Light  = Material(vec_zero, Vector3(12.f, 12.f, 12.f));
+Material Material::Red    = Material(Vector3(.75f, .25f, .25f));
+Material Material::Blue   = Material(Vector3(.25f, .25f, .75f));
+Material Material::Green  = Material(Vector3(.25f, .75f, .25f));
+Material Material::Gray   = Material(Vector3(.75f, .75f, .75f));
+
+struct Primitive {
+	const char *name;
+	Material *material;
+	Vector3 vel;
+
+	Primitive(const char *n, Material& m) {
+		name = n;
+		material = &m;
+		vel = vec_zero;
+	}
 
 	virtual float getDistance(const Ray& r) = 0;
 	virtual void getTextureCoordinates(const Vector3& point, float& u, float &v) = 0;
@@ -160,13 +155,12 @@ struct Primitive {
 };
 
 struct Triangle : Primitive {
-
-	Vector3 p[3]; // points
-	Vector3 edge[2]; // edges
+	Vector3 p[3];
+	Vector3 edge[2];
 	Vector3 center;
 	Vector3 normal;
 	
-	Triangle (const char *n, const Vector3& a, const Vector3& b,const Vector3& c, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
+	Triangle (const char *n, const Vector3& a, const Vector3& b,const Vector3& c, Material& m) : Primitive(n, m) {
 		p[0] = a;
 		p[1] = b;
 		p[2] = c;
@@ -182,7 +176,6 @@ struct Triangle : Primitive {
 		return center;
 	}
 	
-	// no phong interpolation here
 	Vector3 getNormal(const Vector3& point) {
 		return normal; 
 	}
@@ -191,7 +184,6 @@ struct Triangle : Primitive {
 		return p[0] + edge[0]*u + edge[1]*v;
 	}
 
-	// we could get them for free from getDistance
 	void getTextureCoordinates(const Vector3& point, float& u, float &v) {
 		float l0 = length(edge[0]); // precalculate those
 		float l1 = length(edge[1]);
@@ -201,10 +193,7 @@ struct Triangle : Primitive {
 	}
 	
 	// Moller - Trumbore method
-	// http://www.cs.virginia.edu/~gfx/Courses/2003/ImageSynthesis/papers/Acceleration/Fast%20MinimumStorage%20RayTriangle%20Intersection.pdf
 	float getDistance(const Ray& r) {
-		float d, u, v;
-		
 		Vector3 t = (r.origin - p[0]);
 		Vector3 p = (r.direction ^ edge[1]);
 		
@@ -226,14 +215,11 @@ struct Triangle : Primitive {
 	}
 };
 
-struct Square : Triangle {
-	
-	Square (const char *n, const Vector3& a, const Vector3& b,const Vector3& c, const Vector3& col, const Vector3& e, int m) : Triangle(n, a, b, c, col, e, m) {};
+struct Square : Triangle {	
+	Square (const char *n, const Vector3& a, const Vector3& b,const Vector3& c, Material& m) : Triangle(n, a, b, c, m) {};
 	
 	// slightly changed from the triangle
 	float getDistance(const Ray& r) {
-		float d, u, v;
-
 		Vector3 t = (r.origin - p[0]);
 		Vector3 p = (r.direction ^ edge[1]);
 
@@ -254,6 +240,7 @@ struct Square : Triangle {
 		}
 	}
 };
+/*
 
 struct AABB : Primitive {
 
@@ -261,7 +248,7 @@ struct AABB : Primitive {
 	Vector3 max;
 	Vector3 center;
 
-	AABB(const char *n, const Vector3& a, const Vector3& b, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
+	AABB(const char *n, const Vector3& a, const Vector3& b, const Vector3& col, const Vector3& e, Material *m) : Primitive(n, col, e, m) {
 		
 		for(int i =0; i < 3; i ++) {
 			min[i] = std::min(a[i], b[i]);
@@ -334,7 +321,7 @@ struct Plane : Primitive {
 	Vector3 point;
 	Vector3 normal;
 	
-	Plane(const char *n, const Vector3& p, const Vector3& norm, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
+	Plane(const char *n, const Vector3& p, const Vector3& norm, const Vector3& col, const Vector3& e, Material *m) : Primitive(n, col, e, m) {
 		point = p;
 		normal = normalize(norm);
 	}
@@ -361,13 +348,13 @@ struct Plane : Primitive {
 	}
 	
 };
-
+*/
 
 struct Sphere : Primitive {	
 	Vector3 center;
 	float radius;
 
-	Sphere(const char *n, const Vector3& c, float r, const Vector3& col, const Vector3& e, int m) : Primitive(n, col, e, m) {
+	Sphere(const char *n, const Vector3& c, const float r, Material& m) : Primitive(n, m) {
 		center = c;
 		radius = r;
 	}
@@ -426,27 +413,10 @@ struct Sphere : Primitive {
 	}
 };
 
-ostream& operator<< (ostream& os, const Primitive& p) {
-	os << "[Primitive: " << p.name << "]";
-	return os;
-} 
-
-ostream& operator<< (ostream& os, const Vector3& p) {
-	os << "[Vector: (" << p.x << ", " << p.y << ", " << p.z << ")]";
-	return os;
-} 
-
-enum {
-	DIFF, SPEC, REFR, CHECKER
-};
-
-typedef vector<Primitive *> sphere_vec_t;
-
-
 struct Scene {
 	Camera *camera;	
-	sphere_vec_t *sphere_vec;
-	sphere_vec_t *light_vec;
+	vector<Primitive *> *sphere_vec;
+	vector<Primitive *> *light_vec;
 	
 	~Scene() {
 		delete sphere_vec;
@@ -455,57 +425,39 @@ struct Scene {
 	}
 	
 	Scene() {
-		
-		sphere_vec = new sphere_vec_t();
-		light_vec = new sphere_vec_t();
+		sphere_vec = new vector<Primitive *>();
+		light_vec = new vector<Primitive *>();
 
-		sphere_vec->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,			SPEC));
-		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 			16.5f,	Vector3(.25f, .75f, .25f),	vec_zero,			CHECKER));
-		sphere_vec->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 			16.5f,	Vector3(.9f, .9f, .9f),		vec_zero,			REFR));
+		sphere_vec->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 16.5f,	Material::Mirror));
+		sphere_vec->push_back(new Sphere("ball",	Vector3(50.f, 16.5f, 57.f), 16.5f,	Material::Green));
+		sphere_vec->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 16.5f,	Material::Glass));
 
-	//	sphere_vec->push_back(new Sphere("light",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(12.f, 12.f, 12.f),	DIFF));
-		/*
-		sphere_vec->push_back(new Sphere("light r",	Vector3(50.f, 81.6f - 15.f, 81.6f), 	7.f,	vec_zero,			 Vector3(48.f, 1.f, 1.f),	DIFF));
-		sphere_vec->push_back(new Sphere("light b",	Vector3(40.f, 71.6f - 15.f, 71.6f), 	7.f,	vec_zero,			 Vector3(1.f, 1.f, 48.f),	DIFF));
-		sphere_vec->push_back(new Sphere("light g",	Vector3(30.f, 61.6f - 15.f, 61.6f), 	7.f,	vec_zero,			 Vector3(1.f, 48.f, 1.f),	DIFF));
-		*/
-/*		sphere_vec->push_back(new Plane("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 1.f, 0.f),		Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
-		sphere_vec->push_back(new Plane("top",		Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, -1.f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
-		sphere_vec->push_back(new Plane("right",	Vector3(99.f, 0.f, 0.f),	Vector3(-1.f, 0.f, 0.f),	Vector3(.25f, .25f, .75f),	vec_zero,	DIFF));
-		sphere_vec->push_back(new Plane("left",		Vector3(0.f, 0.f, 0.f),		Vector3(1.f, 0.f, 0.f),		Vector3(.75f, .25f, .25f),	vec_zero,	DIFF));
-		sphere_vec->push_back(new Plane("back",		Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, -1.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
-*/
-//		sphere_vec->push_back(new Plane("front",	Vector3(0.f, 0.f, 20.f), Vector3(0.f, 0.f, 1.f),	vec_zero,		vec_zero,	DIFF));
-
-//		sphere_vec->push_back(new AABB("water",		Vector3(0.f, 0.f, 0.f),	Vector3(100.f, 5.f, 90.f),	Vector3(.25f, .75f, .75f),	vec_zero,	REFR));
 		sphere_vec->push_back(new Square("light",	Vector3(40.f, 81.f, 40.f),
 													Vector3(40.f, 81.f, 60.f),
-													Vector3(60.f, 81.f, 40.f),	Vector3(.25f, .75f, .75f),	Vector3(12.f, 12.f, 12.f),	DIFF));
+													Vector3(60.f, 81.f, 40.f),	Material::Light));
 		
 		sphere_vec->push_back(new Square("floor",	Vector3(0.f, 0.f, 0.f),
-													Vector3(0.f, 0.f, 100.f), 
-													Vector3(100.f, 0.f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+													Vector3(0.f, 0.f, 120.f), 
+													Vector3(120.f, 0.f, 0.f),	Material::Gray));
 
 		sphere_vec->push_back(new Square("ceiling",	Vector3(0.f, 81.6f, 0.f),
 													Vector3(0.f, 81.6f, 100.f), 
-													Vector3(100.f, 81.6f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+													Vector3(100.f, 81.6f, 0.f),	Material::Gray));
 
 		sphere_vec->push_back(new Square("back",	Vector3(0.f, 0.f, 0.f),
 													Vector3(0.f, 81.6f, 0.f), 
-													Vector3(100.f, 0.f, 0.f),	Vector3(.75f, .75f, .75f),	vec_zero,	DIFF));
+													Vector3(100.f, 0.f, 0.f),	Material::Gray));
 
 		sphere_vec->push_back(new Square("left",	Vector3(0.f, 0.f, 0.f),
 													Vector3(0.f, 81.6f, 0.f), 
-													Vector3(0.f, 0.f, 100.f),	Vector3(.75f, .25f, .25f),	vec_zero,	DIFF));
+													Vector3(0.f, 0.f, 100.f),	Material::Red));
 
 		sphere_vec->push_back(new Square("right",	Vector3(100.f, 0.f, 0.f),
 													Vector3(100.f, 81.6f, 0.f), 
-													Vector3(100.f, 0.f, 100.f),	Vector3(.25f, .25f, .75f),	vec_zero,	CHECKER));
-		
+													Vector3(100.f, 0.f, 100.f),	Material::Blue));
 
-		
-		for (sphere_vec_t::iterator it = sphere_vec->begin(); it != sphere_vec->end(); ++it) {
-			if ((*it)->isLight()) {
+		for (vector<Primitive *>::iterator it = sphere_vec->begin(); it != sphere_vec->end(); ++it) {
+			if ((*it)->material->isLight()) {
 				light_vec->push_back(*it);
 			}
 		}
@@ -518,7 +470,7 @@ struct Scene {
 		distance = FLT_MAX;
 		Primitive *ret = NULL;
 
-		for (sphere_vec_t::iterator it = sphere_vec->begin(); it != sphere_vec->end(); ++it) {
+		for (vector<Primitive *>::iterator it = sphere_vec->begin(); it != sphere_vec->end(); ++it) {
 			Primitive *s = *it;
 
 			float d = s->getDistance(r);
@@ -537,7 +489,7 @@ struct Scene {
 		const Vector3 bb = Vector3(100.f, 100.f, 100.f);
 		
 		// animate lights
-		for (sphere_vec_t::iterator it = light_vec->begin(); it != light_vec->end(); ++it) {
+		for (vector<Primitive *>::iterator it = light_vec->begin(); it != light_vec->end(); ++it) {
 			Sphere *light = dynamic_cast<Sphere *>(*it);
 			
 			// only bouce spheres
@@ -564,7 +516,6 @@ struct Scene {
 };
 
 struct RayTracer {
-
 	Scene *scene;
 	int width;
 	int height;
@@ -574,6 +525,10 @@ struct RayTracer {
 	bool soft_shadows;
 	
 	RGBA *fb;
+	
+	~RayTracer() {
+		free(fb);
+	}
 
 	RayTracer(Scene *s, int w, int h, int md, int ps, int ls, bool ss) {
 		scene = s;
@@ -619,7 +574,6 @@ struct RayTracer {
 	}
 	
 	Vector3 sampleRay(Ray& ray, int depth) {
-
 		Vector3 sample = vec_zero;
 
 		if (depth-- == 0) {
@@ -631,91 +585,84 @@ struct RayTracer {
 		
 		if (s == NULL) {
 			return sample;
-		} else if (s->isLight()) {
-			return s->emission;
+		}
+		
+		Material *m = s->material;
+		if (m->isLight()) {
+			return m->emission;
 		}
 
 		Vector3 illumination = vec_zero;
 		Vector3 hitPoint = ray.origin + distance * ray.direction;
 		Vector3 normal = s->getNormal(hitPoint);
-		Vector3 color = s->color;
-		int material = s->material;
 
-		switch(material) {
-			case CHECKER: {
+		if (m->transparency > 0.f) {
+			float n1 = 1.f;
+			float n2 = m->refractive;
+
+			float cosI = -1.f * ray.direction * normal;
+			// if the ray and the normal are on the same direction
+			// we flip the normal, invert the cosine and make the transition n2 -> n1
+			if (cosI < 0.f) {
+				normal = -1.f * normal;
+				cosI = -cosI;
+				float tmp = n1; n1 = n2; n2 = tmp;
+			}
+			float n = n1 / n2;
+
+			float cosT2 = 1.0f - n * n * (1.0f - cosI * cosI);
+			if (cosT2 < 0.f) {
+				// total internal reflection
+				// applies the smallest offset over the hit point to be sure not to hit again the primitive
+				Ray reflected = Ray(hitPoint + normal * (1.f + FLT_EPSILON), ray.direction + 2.f * cosI * normal);
+				sample = sampleRay(reflected, depth);
+			} else {
+				float cosT = sqrtf(cosT2);
+
+				// Fresnell's equations, per polarization (averaged)
+				float perp = pow((n1 * cosI - n2 * cosT) / (n1 * cosI + n2 * cosT), 2.f);
+				float para = pow((n2 * cosI - n1 * cosT) / (n2 * cosI + n1 * cosT), 2.f);
+				float fres = (perp + para) / 2.f;
+
+				Ray reflected = Ray(hitPoint + normal * (1.f + FLT_EPSILON), ray.direction + 2.f * cosI * normal);
+				sample = fres * sampleRay(reflected, depth);
+
+				Ray refracted = Ray(hitPoint - normal * (1.f + FLT_EPSILON), n * ray.direction + (n * cosI - cosT) * normal);
+				sample = sample + (1.f - fres) * sampleRay(refracted, depth);
+
+				sample = sample.cmul(m->color);
+			}
+		} else if (m->specular > 0.f) {
+			// as before, we want to reflect the interior of a sphere the same
+			float cosI = normal * ray.direction;
+			if (cosI < 0.f) {
+				normal = -1.f * normal;
+			}
+
+			Ray reflected = Ray(hitPoint + normal * (1.f + FLT_EPSILON), ray.direction + 2.f * cosI * normal);
+			sample = sampleRay(reflected, depth).cmul(m->color);
+		} else {
+			// we want also to illuminate the inside of the sphere, so we
+			if (normal * ray.direction > 0.f) {
+				normal = -1.f * normal;
+			}
+			illumination = sampleLights(ray, hitPoint, normal);
+
+			Vector3 ambient = Vector3(1.0f, 1.0f, 1.0f) * 0.7f;
+			Vector3 intensity = ambient + illumination;
+			sample = m->color.cmul(intensity);
+
+			// Applies a simple checker texture over the previous result
+			if (m->checker > 0.f) {
 				float u,v;
 
 				s->getTextureCoordinates(hitPoint, u, v);
-				int scale = s->scale;
+				int scale = m->checker;
 
 				int a = int(u * scale) % 2;
 				int b = int(v * scale) % 2;
-				color = (a ^ b)? color * 0.6f : color;
+				sample = (a ^ b)? sample * 0.6f : sample;
 			}
-			// NOTE THE MISSING BREAK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			case DIFF: {
-
-				// we want also to illuminate the inside of the sphere, so we
-				// will invert the normal if we are inside of the sphere (i.e. the ray origin is inside it)
-				// rationale: if they are in the same direction, the cos/dot is positive
-				if (normal * ray.direction > 0.f) {
-					normal = -1.f * normal;
-				}
-				illumination = sampleLights(ray, hitPoint, normal);
-
-				// lambert model
-				Vector3 ambient = Vector3(1.0f, 1.0f, 1.0f) * 0.7f;
-				Vector3 intensity = ambient + illumination;
-				sample = color.cmul(intensity);
-			}
-			break;
-			case SPEC: {
-				// as before, we want to reflect the interior of a sphere the same
-				if (normal * ray.direction > 0.f) {
-					normal = -1.f * normal;
-				}
-
-				Ray reflected = ray.reflect(hitPoint, normal);
-				sample = sampleRay(reflected, depth).cmul(color);
-			}
-			break;
-			case REFR: {
-				float n1 = 1.f;  // air
-				float n2 = 1.5f; // cristal
-
-				float cosI = -1.f * ray.direction * normal;
-				// if the ray and the normal are on the same direction
-				// we flip the normal, invert the cosine and make the transition n2 -> n1
-				if (cosI < 0.f) {
-					normal = -1.f * normal;
-					cosI = -cosI;
-					float tmp = n1; n1 = n2; n2 = tmp;
-				}
-				float n = n1 / n2;
-
-				float cosT2 = 1.0f - n * n * (1.0f - cosI * cosI);
-				// total internal reflection
-				if (cosT2 < 0.f) {
-					Ray reflected = ray.reflect(hitPoint, normal);
-					sample = sampleRay(reflected, depth);
-				} else {
-					float cosT = sqrtf(cosT2);
-
-					// Fresnell's equations, per polarization (averaged)
-					float perp = pow((n1 * cosI - n2 * cosT) / (n1 * cosI + n2 * cosT), 2.f);
-					float para = pow((n2 * cosI - n1 * cosT) / (n2 * cosI + n1 * cosT), 2.f);
-					float fres = (perp + para) / 2.f;
-
-					Ray reflected = ray.reflect(hitPoint, normal);
-					sample = fres * sampleRay(reflected, depth);
-
-					Ray refracted = Ray(hitPoint - normal * (1.f + FLT_EPSILON), n * ray.direction + (n * cosI - cosT) * normal);
-					sample = sample + (1.f - fres) * sampleRay(refracted, depth);
-
-					sample = sample.cmul(color);
-				}
-			}
-			break;
 		}
 
 		return sample;
@@ -724,7 +671,7 @@ struct RayTracer {
 	Vector3 sampleLights(const Ray& ray, const Vector3& hitPoint, const Vector3& normal) {
 		Vector3 total = vec_zero;
 
-		for (sphere_vec_t::iterator it = scene->light_vec->begin(); it != scene->light_vec->end(); ++it) {
+		for (vector<Primitive *>::iterator it = scene->light_vec->begin(); it != scene->light_vec->end(); ++it) {
 			Primitive *l = *it;
 
 			Vector3 illumination = vec_zero;
@@ -776,7 +723,7 @@ struct RayTracer {
 
 					// lenght of the light vector
 					float attenuation = sqrtf(lightVector * lightVector);
-					Vector3 contribution = l->emission * (lambert + blinn) * 0.5f / attenuation;
+					Vector3 contribution = l->material->emission * (lambert + blinn) * 0.5f / attenuation;
 
 					illumination = illumination + contribution;
 				}
