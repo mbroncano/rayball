@@ -1,6 +1,6 @@
 SRC=main.cpp
 CC=g++
-CCFLAGS=-framework OpenGl -framework Glut -fopenmp -O3 -O2
+CCFLAGS=-framework OpenGl -framework Glut -fopenmp -O3 -O2 -g
 
 
 rayball: $(SRC) Makefile

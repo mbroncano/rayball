@@ -65,8 +65,15 @@ struct Camera {
 };
 
 struct Texture {
+	enum TextureFilter {
+		None, Bilinear
+	};
+	
 	int width, height;
 	uint8_t *data;
+	int scale;
+	int size;
+	TextureFilter filter;
 
 	Texture(const char *path) {
 		FILE *file = fopen(path, "r");
@@ -75,24 +82,43 @@ struct Texture {
 			exit(1);
 		};
 		
-		int toread = width * height * 3;
-		data = (uint8_t *)malloc(toread);
-		if (fread(data, 1, toread, file) != toread) {
+		size = width * height * 3;
+		data = (uint8_t *)malloc(size);
+		if (fread(data, 1, size, file) != size) {
 			cout << "Error reading file contents" << path << endl;
 			exit(2);
 		}
 	}
 	
-	// TODO: bilinear filtering
-	Vector3 getPixelAt(float u, float v) {
-		int x = u * width;
-		int y = v * height;
+	Vector3 getPixelAt(const float u, const float v) {
+		float x = u * width * scale;
+		float y = v * height * scale;
+		Vector3 ret = vec_zero;
 		
-		Vector3 ret;
-		int index = (y * width + x) * 3;
-		for (int i = 0; i < 3; i++) {
-			ret[i] = float(data[index + i]) / 255.f;
-		}
+		switch(filter) {
+			case None: {
+				int index = int(y * width + x) * 3 % size;
+				for (int i = 0; i < 3; i++) {
+					ret[i] = float(data[index + i]) / 255.f;
+				}
+			}
+			break;
+			case Bilinear: {
+				for (int y0 = int(y); y0 < int(y) + 2; y0 ++)
+					for (int x0 = int(x); x0 < int(x) + 2; x0 ++) {
+						Vector3 sample = vec_zero;
+
+						int index = ((y0 * width + x0) * 3) % size;
+						for (int i = 0; i < 3; i++) {
+							sample[i] = float(data[index + i]) / 255.f;
+						}
+
+						ret = ret + sample * (1.f - fabs((x0 - x0) * (y - y0))) / 4.f;
+						//ret = ret + sample * (fabs((x - x0) * (y - y0)));
+					}
+			}
+			break;
+			}
 		return ret;
 	}	
 };
@@ -270,6 +296,10 @@ struct Sphere : Primitive {
 		
 		u = atan(normal.z/normal.x) / M_PI - 0.5f;
 		v = asin(normal.y) / M_PI - 0.5f;
+		
+		// TODO: check if this is correct
+		u = fabs(u);
+		v = fabs(v);
 	}
 	
 	inline Vector3 getNormal(const Vector3& spherePoint) {
@@ -296,11 +326,13 @@ struct Scene {
 	vector<Primitive *> *spheres;
 	vector<Primitive *> *lights;
 	set<Material *> *materials;
+	set<Texture *> *textures;
 	
 	~Scene() {
 		delete spheres;
 		delete lights;
 		delete materials;
+		delete textures;
 		delete camera;
 	}
 	
@@ -308,6 +340,7 @@ struct Scene {
 		spheres = new vector<Primitive *>();
 		lights = new vector<Primitive *>();
 		materials = new set<Material *>();
+		textures = new set<Texture *>();
 		
 		Material *Mirror = new Material(Vector3(.9f, .9f, .9f),	Material::Specular);
 		Material *Glass  = new Material(Vector3(.9f, .9f, .9f),	Material::Glass);
@@ -315,6 +348,9 @@ struct Scene {
 		Material *Blue   = new Material(Vector3(.25f, .25f, .75f));
 		Material *Gray   = new Material(Vector3(.75f, .75f, .75f));
 		Material *Light  = new Material(Vector3(.9f, .9f, .9f), Material::Light);
+		Material *GLight = new Material(Vector3(.1f, .9f, .1f), Material::Light);
+		Material *RLight = new Material(Vector3(.9f, .1f, .1f), Material::Light);
+		Material *BLight = new Material(Vector3(.1f, .1f, .9f), Material::Light);
 		Material *Green  = new Material(Vector3(.25f, .75f, .25f));
 		Material *Wood   = new Material(vec_zero);
  		Green->checker = 8.f;
@@ -326,21 +362,31 @@ struct Scene {
 		materials->insert(Gray);
 		materials->insert(Light);
 		materials->insert(Green);
+		materials->insert(GLight);
+		materials->insert(BLight);
+		materials->insert(RLight);
+		materials->insert(Wood);
 		
 		Texture *texture = new Texture("wood.ppm");
+		texture->scale = 2.f;
+		texture->filter = Texture::Bilinear;
 		Wood->texture = texture;
+		
+		textures->insert(texture);
 
 		spheres->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 16.5f,	Mirror));
-		spheres->push_back(new Sphere("ball",	Vector3(60.f, 16.5f, 30.f), 16.5f,	Green));
+		spheres->push_back(new Sphere("ball",	Vector3(65.f, 16.5f, 40.f), 16.5f,	Wood));
 		spheres->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 16.5f,	Glass));
-		spheres->push_back(new Sphere("blite",	Vector3(50.f, 70.f, 50.f),	7.f,	Light));
+		spheres->push_back(new Sphere("glite",	Vector3(50.f, 70.f, 50.f),	5.f,	GLight));
+//		spheres->push_back(new Sphere("rlite",	Vector3(50.f, 70.f, 50.f),	5.f,	RLight));
+//		spheres->push_back(new Sphere("blite",	Vector3(50.f, 70.f, 50.f),	5.f,	BLight));
 		
 		spheres->push_back(new Square("light",	Vector3(40.f, 81.f, 40.f),	Vector3(40.f, 81.f, 60.f),	Vector3(60.f, 81.f, 40.f),	Light));
-		spheres->push_back(new Square("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, 120.f),	Vector3(100.f, 0.f, 0.f),	Wood));
-		spheres->push_back(new Square("top",	Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, 81.6f, 100.f), Vector3(100.f, 81.6f, 0.f),	Gray));
+		spheres->push_back(new Square("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, 120.f),	Vector3(100.f, 0.f, 0.f),	Gray));
+		spheres->push_back(new Square("top",	Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, 81.6f, 120.f), Vector3(100.f, 81.6f, 0.f),	Gray));
 		spheres->push_back(new Square("back",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 81.6f, 0.f),	Vector3(100.f, 0.f, 0.f),	Gray));
-		spheres->push_back(new Square("left",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, 0.f, 100.f),	Red));
-		spheres->push_back(new Square("right",	Vector3(100.f, 0.f, 0.f),	Vector3(100.f, 81.6f, 0.f),	Vector3(100.f, 0.f, 100.f),	Blue));
+		spheres->push_back(new Square("left",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 81.6f, 0.f),	Vector3(0.f, 0.f, 120.f),	Red));
+		spheres->push_back(new Square("right",	Vector3(100.f, 0.f, 0.f),	Vector3(100.f, 81.6f, 0.f),	Vector3(100.f, 0.f, 120.f),	Blue));
 
 		for (vector<Primitive *>::iterator it = spheres->begin(); it != spheres->end(); ++it) {
 			if ((*it)->material->isLight()) {
@@ -393,7 +439,7 @@ struct Scene {
 					
 					for (int j = 0; j< 3; j ++) {
 						if (i != j)
-							light->vel[j] += (frandom() * 2.f - 1.f) * 0.9f;
+							light->vel[j] += (frandom() * 2.f - 1.f) * 0.8f;
 					}
 					
 				} else {
@@ -445,6 +491,8 @@ struct RayTracer {
 	}
 
 	void rayTrace() {
+		srandom(0);
+		
 		int sample_dir = sqrt(pixel_samples);
 
 		scene->camera->setSize(width, height);
