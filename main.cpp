@@ -375,11 +375,11 @@ struct Scene {
 		textures->insert(texture);
 
 		spheres->push_back(new Sphere("mirror",	Vector3(27.f, 16.5f, 47.f), 16.5f,	Mirror));
-		spheres->push_back(new Sphere("ball",	Vector3(65.f, 16.5f, 40.f), 16.5f,	Wood));
+		spheres->push_back(new Sphere("wood",	Vector3(65.f, 16.5f, 40.f), 16.5f,	Wood));
 		spheres->push_back(new Sphere("glass",	Vector3(73.f, 16.5f, 78.f), 16.5f,	Glass));
-		spheres->push_back(new Sphere("glite",	Vector3(50.f, 70.f, 50.f),	5.f,	GLight));
-//		spheres->push_back(new Sphere("rlite",	Vector3(50.f, 70.f, 50.f),	5.f,	RLight));
-//		spheres->push_back(new Sphere("blite",	Vector3(50.f, 70.f, 50.f),	5.f,	BLight));
+		spheres->push_back(new Sphere("glite",	Vector3(60.f, 70.f, 40.f),	4.f,	GLight));
+		spheres->push_back(new Sphere("rlite",	Vector3(50.f, 70.f, 50.f),	4.f,	RLight));
+		spheres->push_back(new Sphere("blite",	Vector3(40.f, 70.f, 60.f),	4.f,	BLight));
 		
 		spheres->push_back(new Square("light",	Vector3(40.f, 81.f, 40.f),	Vector3(40.f, 81.f, 60.f),	Vector3(60.f, 81.f, 40.f),	Light));
 		spheres->push_back(new Square("bottom",	Vector3(0.f, 0.f, 0.f),		Vector3(0.f, 0.f, 120.f),	Vector3(100.f, 0.f, 0.f),	Gray));
@@ -393,17 +393,20 @@ struct Scene {
 				lights->push_back(*it);
 			}
 		}
-
+		
 		camera = new Camera(Vector3(50.f, 45.f, 205.6f), Vector3(50.f, 45.f - 0.042612f, 204.6f));
 	}
 	
 	// TODO: implement kd-trees or BVH
-	Primitive *intersectRay(const Ray& r, float& distance) {
+	Primitive *intersectRay(const Ray& r, float& distance, Primitive *p = NULL) {
 		distance = FLT_MAX;
 		Primitive *ret = NULL;
 
 		for (vector<Primitive *>::iterator it = spheres->begin(); it != spheres->end(); ++it) {
 			Primitive *s = *it;
+
+			if (s == p)
+				continue;
 
 			float d = s->getDistance(r);
 			if (d > 0 && d < distance) {
@@ -434,19 +437,21 @@ struct Scene {
 				continue;
 
 			for (int i =0; i<3; i++) {
-				if ((light->center[i] < (aa[i] + light->radius*2)) || (light->center[i] > (bb[i] - light->radius*2))){
+				light->center[i] += light->vel[i];
+
+				if ((light->center[i] - light->radius < aa[i]) || (light->center[i] + light->radius > bb[i])){
 					light->vel[i] *= -1.f;
+					
 					
 					for (int j = 0; j< 3; j ++) {
 						if (i != j)
-							light->vel[j] += (frandom() * 2.f - 1.f) * 0.8f;
+							light->vel[j] += (frandom() -0.5f) * 0.9f;
 					}
 					
 				} else {
 					light->vel[i] += acc[i];
 				}
 				
-				light->center[i] += light->vel[i];
 			}
 		}
 	}
@@ -748,7 +753,7 @@ void init(int argc, char **argv) {
 	glutInit(&argc, argv);
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_ALPHA);
 	glutInitWindowSize(1024, 1024);
-	glutInitWindowPosition(50, 50);
+	glutInitWindowPosition(1300, 50);
 	glutCreateWindow("Rayball3");
 
 	glutDisplayFunc(display);
