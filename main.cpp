@@ -6,7 +6,9 @@
 #include <iostream>
 
 #include <time.h>
+#ifdef _OPENMP
 #include <omp.h>
+#endif
 #include <emmintrin.h>
 #include <pmmintrin.h>
 #include <GLUT/glut.h>
