@@ -9,6 +9,11 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+
+#ifdef __APPLE__
+#include <dispatch/dispatch.h>
+#endif
+
 #include <emmintrin.h>
 #include <pmmintrin.h>
 #include <GLUT/glut.h>
@@ -568,9 +573,12 @@ struct RayTracer {
 		int sample_dir = sqrt(pixel_samples);
 
 		scene->camera->setSize(width, height);
-		
-	#pragma omp parallel for schedule(dynamic,1)
+#ifndef __APPLE__	
+	    #pragma omp parallel for schedule(dynamic,1)
 		for (int y = 0; y < height; y ++) {
+#else
+        dispatch_apply(height, dispatch_get_global_queue(0, 0), ^(size_t y){
+#endif
 			for (int x = 0; x < width; x ++) {
 				Vector3 sample = vec_zero;
 			
@@ -588,6 +596,9 @@ struct RayTracer {
 				fb[y * width + x] = RGBA(sample);
 			}
 		}
+#ifdef __APPLE__
+    );
+#endif
 	}
 	
 	Vector3 sampleRay(Ray& ray, int depth) {
