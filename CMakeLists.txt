@@ -13,7 +13,7 @@ include_directories( ${OPENGL_INCLUDE_DIRS}  ${GLUT_INCLUDE_DIRS} )
 
 # add the executable
 add_executable(rayball main.cpp)
-set(CMAKE_CXX_FLAGS "-Os -Wno-deprecated-declarations")
+set(CMAKE_CXX_FLAGS "-stdlib=libc++ -std=c++11 -Os -Wno-deprecated-declarations")
 
 # libraries for the linker
 target_link_libraries(rayball ${OPENGL_LIBRARIES} ${GLUT_LIBRARY} ) 

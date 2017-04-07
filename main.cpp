@@ -4,6 +4,8 @@
 #include <vector>
 #include <set>
 #include <iostream>
+#include <fstream>
+#include <iterator>
 
 #include <time.h>
 #ifdef _OPENMP
@@ -16,6 +18,9 @@
 
 #include <emmintrin.h>
 #include <pmmintrin.h>
+#include <xmmintrin.h>
+#include <smmintrin.h>
+#include <immintrin.h>
 #include <GLUT/glut.h>
 
 using namespace std;
@@ -43,7 +48,7 @@ struct Vector3 {
 
 	// dot (inner) product
 	float operator*(const Vector3& b) const { 
-		return x*b.x + y*b.y + z*b.z;
+        return _mm_cvtss_f32(_mm_dp_ps(m128, b.m128, 0x71));
 	}
 
 	// Cross Product	
@@ -69,26 +74,12 @@ inline Vector3 operator*(float a, const Vector3&b)  { return _mm_mul_ps(_mm_set1
 
 // Length of a vector
 inline float length(const Vector3& a) {
-	return sqrtf(a*a);
+    return _mm_cvtss_f32(_mm_sqrt_ss(_mm_dp_ps(a.m128, a.m128, 0x71)));
 }
 
 // Make a vector unit length
 inline Vector3 normalize(const Vector3& in) {
-	Vector3 a = in;
-	a.w = 0.f;
-
-	__m128 D = a.m128;
-	D = _mm_mul_ps(D, D);
-	D = _mm_hadd_ps(D, D);
-	D = _mm_hadd_ps(D, D);
- 
-	// 1 iteration of Newton-raphson -- Idea from Intel's Embree.
-	__m128 r = _mm_rsqrt_ps(D);
-	r = _mm_add_ps(
-		_mm_mul_ps(_mm_set_ps(1.5f, 1.5f, 1.5f, 1.5f), r),
-		_mm_mul_ps(_mm_mul_ps(_mm_mul_ps(D, _mm_set_ps(-0.5f, -0.5f, -0.5f, -0.5f)), r), _mm_mul_ps(r, r)));
- 
-	return _mm_mul_ps( a.m128, r );
+    return _mm_mul_ps(in.m128, _mm_rsqrt_ps(_mm_dp_ps(in.m128, in.m128, 0x7f))); 
 }
 
 const Vector3 vec_zero = Vector3(0.f, 0.f, 0.f);
@@ -136,6 +127,15 @@ struct Camera {
 	}
 };
 
+std::istream& operator>>(std::istream &in,Vector3& vector){
+    uint8_t r, g, b;
+
+    in >> r >> g >> b;
+    vector = Vector3(r, g, b) / 255.f;
+
+    return in;
+}
+
 struct Texture {
 	enum TextureFilter {
 		None, Bilinear
@@ -146,20 +146,15 @@ struct Texture {
 	int scale;
 	int size;
 	TextureFilter filter;
+    std::vector<Vector3> image;
 
 	Texture(const char *path) {
-		FILE *file = fopen(path, "r");
-		if (!file || fscanf(file, "P6\n%d %d\n255\n", &width, &height) != 2) {
-			cout << "Error opening file " << path << endl;
-			exit(1);
-		};
-		
-		size = width * height * 3;
-		data = (uint8_t *)malloc(size);
-		if (fread(data, 1, size, file) != size) {
-			cout << "Error reading file contents" << path << endl;
-			exit(2);
-		}
+        std::ifstream input(path, std::ios::binary | std::ios::in);
+        std::string magic, maxcol;
+        uint8_t spc;
+
+        input >> magic >> width >> height >> maxcol >> std::noskipws >> spc;
+        image = std::vector<Vector3>(std::istream_iterator<Vector3>(input), {});
 	}
 	
 	Vector3 getPixelAt(const float u, const float v) {
@@ -169,25 +164,15 @@ struct Texture {
 		
 		switch(filter) {
 			case None: {
-				int index = int(y * width + x) * 3 % size;
-				for (int i = 0; i < 3; i++) {
-					ret[i] = float(data[index + i]) / 255.f;
-				}
+                ret = image[int(y * width + x) % image.size()];
 			}
 			break;
 			case Bilinear: {
-				for (int y0 = int(y); y0 < int(y) + 2; y0 ++)
-					for (int x0 = int(x); x0 < int(x) + 2; x0 ++) {
-						Vector3 sample = vec_zero;
-
-						int index = ((y0 * width + x0) * 3) % size;
-						for (int i = 0; i < 3; i++) {
-							sample[i] = float(data[index + i]) / 255.f;
-						}
-
-						ret = ret + sample * (1.f - fabs((x0 - x0) * (y - y0))) / 4.f;
-						//ret = ret + sample * (fabs((x - x0) * (y - y0)));
-					}
+                ret = image[int(y * width + x) % image.size()] +
+                      image[int(y * width + x + 1) % image.size()] +
+                      image[int((y + 1) * width + x) % image.size()] +
+                      image[int((y + 1) * width + x + 1) % image.size()];
+                ret = ret / 4.f;
 			}
 			break;
 			}
@@ -278,24 +263,23 @@ struct Triangle : Primitive {
 	
 	// Moller - Trumbore method
 	float getDistance(const Ray& r) {
-		Vector3 t = (r.origin - point[0]);
 		Vector3 p = (r.direction ^ edge[1]);
 		
 		float det1 = p * edge[0];
-		if (fabs(det1) < FLT_EPSILON) {
+		if (fabs(det1) < FLT_EPSILON)
 			return -1.f;
-		} else {
-			float u = (p * t) / det1;
-			if (u < 0.f || u > 1.f)
-				return -1.f;
+		
+        Vector3 t = (r.origin - point[0]);
+        float u = (p * t) / det1;
+    	if (u < 0.f || u > 1.f)
+			return -1.f;
 
-			Vector3 q = (t ^ edge[0]);
-			float v = (q * r.direction) / det1;
-			if (v < 0.f || (u + v) > 1.f)
-				return -1.f;
+    	Vector3 q = (t ^ edge[0]);
+		float v = (q * r.direction) / det1;
+		if (v < 0.f || (u + v) > 1.f)
+			return -1.f;
 
-			return (q * edge[1]) / det1;
-		}
+		return (q * edge[1]) / det1;
 	}
 };
 
@@ -634,7 +618,8 @@ struct RayTracer {
 				if (cosI < 0.f) {
 					normal = -1.f * normal;
 					cosI = -cosI;
-					float tmp = n1; n1 = n2; n2 = tmp;
+                    std::swap(n1, n2);
+					//float tmp = n1; n1 = n2; n2 = tmp;
 				}
 				float n = n1 / n2;
 
