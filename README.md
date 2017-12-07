@@ -3,6 +3,8 @@ Rayball
 
 Small, simple Whitted-style Cornell box ray tracer, written in C++
 
+![rayball](/rayball.png)
+
 ## Features
 * Realtime performance
 * Parallel render using OpenMP

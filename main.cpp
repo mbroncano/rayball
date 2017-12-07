@@ -90,11 +90,10 @@ float frandom() {
 
 struct Ray {
 	Vector3 origin, direction;
-	
-	Ray(const Vector3& o, const Vector3& d) {
-		origin = o;
-		direction = d;
-	}
+	Ray(const Vector3& o, const Vector3& d) :
+        origin(o),
+        direction(d)
+    {};
 };
 
 struct Camera {
@@ -102,11 +101,11 @@ struct Camera {
 	Vector3 vec_x, vec_y;
 	int width, height;
 
-	Camera(const Vector3& p, const Vector3& t) {
-		position = p;
-		target = t;
-		direction = normalize(t - p);
-	}
+	Camera(const Vector3& p, const Vector3& t) : 
+        position(p),
+        target(t),
+        direction(normalize(t - p))
+    {};
 	
 	void setSize(int w, int h, float fov_angle = 45.f) {
 		width  = w;
@@ -127,7 +126,7 @@ struct Camera {
 	}
 };
 
-std::istream& operator>>(std::istream &in,Vector3& vector){
+std::istream& operator>>(std::istream &in, Vector3& vector){
     uint8_t r, g, b;
 
     in >> r >> g >> b;
@@ -308,6 +307,7 @@ struct Square : Triangle {
 		}
 	}
 };
+
 
 
 struct Sphere : Primitive {	
